@@ -129,12 +129,12 @@ test('the note needs both fields and reports its own changes', async ($, on) => 
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 20 } } as const
 
-test('the band shows the whole note, its change and the last check, and its buttons work', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the band shows the whole note, its change and the last check, and its buttons work`, async ($, on) => {
   standIn(on)
   await $.tool.call(NOTE)
   await $.tool.call({ ...NOTE, want: 'send two messages' })
   await $.tool.call(CHECK)
-  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'mental-model', surface, ...BAND })
   expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /he knows the text/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /was «send one message» now «send two messages»/ })).toBeDefined()
@@ -168,9 +168,9 @@ test('the band shows the whole note, its change and the last check, and its butt
   await ui.unmount()
 })
 
-test('the band says so while no note exists', async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the band says so while no note exists`, async ($, on) => {
   standIn(on)
-  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'mental-model', surface, ...BAND })
   expect(await ui.find({ type: 'Text', text: /not written down what you want yet/ })).toBeDefined()
   expect(await ui.find({ key: 'history' })).toBe(undefined)
   await ui.unmount()
