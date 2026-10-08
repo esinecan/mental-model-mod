@@ -13,6 +13,10 @@ function standIn(on: On) {
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e as never)
+    return h(Box, {})
+  })
   on('tool.register', ($, e) => ({ value: { tool: `mcp__mental-model__${e.name}` } }))
   on('state.get', ($, e) => ({ value: values.get(keyOf(e)) ?? { value: undefined, version: 0 } }))
   on('state.set', ($, e) => {
