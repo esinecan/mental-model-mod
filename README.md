@@ -33,9 +33,3 @@ Every session loads it through `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `
 claude plugin validate .
 claude plugin test .
 ```
-
-## History
-
-- 2026-10-07: first build, four parts.
-- 2026-10-08 morning: Eren kept the note and the check and cut the per-message write block, the deepthink gate and the legibility counter.
-- 2026-10-08 evening: deleted by mistake, rebuilt from the session transcripts with an unclipped band, the note history and the diff. Nothing beyond the check gate blocks a write.

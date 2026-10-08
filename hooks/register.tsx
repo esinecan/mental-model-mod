@@ -4,12 +4,9 @@ import type { Register } from 'claude-code'
 import type { Change, Check, Note } from '../types'
 
 // mental-model: Claude's working model of Eren, in his words, kept where he
-// can see it and correct it, plus a check before each write.
-//
-// Built 2026-10-07. On 2026-10-08 Eren kept the note and the check and cut
-// the rest. Rebuilt the same evening with the parts he asked for: a band
-// that shows the whole note, and the note's evolution, visible to the agent
-// in the tool result and the system prompt and to Eren in the band.
+// can see it and correct it, plus a check before each write. The note's
+// evolution is visible to the agent in the tool result and the system
+// prompt, and to Eren in the band.
 
 const PLUGIN = 'mental-model'
 const NOTE_TOOL = `mcp__${PLUGIN}__note`
