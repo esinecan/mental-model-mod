@@ -1,20 +1,15 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { REMINDER, REMIND_PROMPT, describeChanges, diffNotes, fewTargets, isCovered, isWrite, targetOf } from './register'
+import { describeChanges, diffNotes, fewTargets, isCovered, isWrite, targetOf } from './register'
 
 // The test's hooks stand for the engine beneath the mod: a clock, the
-// session state, the status line, tool registration and the prompt queue.
-const submitted: string[] = []
+// session state, the status line, and tool registration.
 function standIn(on: On) {
   const values = new Map<string, { value: unknown; version: number }>()
   const keyOf = (e: { plugin: string; key: string; id?: string }) => `${e.plugin}/${e.key}/${e.id ?? ''}`
 
   on('clock.now', () => ({ value: 1_000_000 }))
-  on('prompt.submit', ($, e) => {
-    submitted.push(e.text)
-    return { text: e.text }
-  })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
@@ -85,8 +80,7 @@ test('the diff names each changed field', () => {
   const previous = { want: 'a', inHisHead: 'b', version: 1, at: 0 }
   expect(diffNotes(null, { want: 'a', inHisHead: 'b' })).toEqual([])
   expect(describeChanges(diffNotes(previous, { want: 'a', inHisHead: 'b' }))).toBe('unchanged')
-  expect(describeChanges(diffNotes(previous, { want: 'c', inHisHead: 'b' }))).toBe('what he wants: was «a» now «c»')
-  expect(REMINDER).toContain('mcp__mental-model__note')
+  expect(describeChanges(diffNotes(previous, { want: 'c', inHisHead: 'b' }))).toBe('intent: was «a» now «c»')
 })
 
 test('a write without a check is denied', async ($, on) => {
@@ -110,7 +104,7 @@ test('a write passes after a check names it, with or without a note', async ($, 
 test('a check that says not asked warns the model', async ($, on) => {
   standIn(on)
   const run = await $.tool.call({ ...CHECK, asked: 'not asked' })
-  expect(textOf(run)).toContain('Eren did not ask for this write')
+  expect(textOf(run)).toContain('The user did not ask for this write')
 })
 
 test('the note needs both fields and reports its own changes', async ($, on) => {
@@ -147,14 +141,9 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the
   await ui.press({ key: 'history' })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /^v1 \(/ })).toBe(undefined)
-  submitted.length = 0
   await ui.press({ key: 'remind' })
   await ui.redraw()
-  expect(submitted).toEqual([REMIND_PROMPT])
   expect((await ui.find({ key: 'remind' }))?.props.label).toBe('Reminded ✓')
-  await ui.press({ key: 'remind' })
-  await ui.redraw()
-  expect(submitted).toEqual([REMIND_PROMPT])
   await $.tool.call({ ...NOTE, want: 'send three messages' })
   await ui.redraw()
   expect((await ui.find({ key: 'remind' }))?.props.label).toBe('Remind')

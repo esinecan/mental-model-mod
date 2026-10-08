@@ -3,10 +3,10 @@ import type { Register } from 'claude-code'
 
 import type { Change, Check, Note } from '../types'
 
-// mental-model: Claude's working model of Eren, in his words, kept where he
-// can see it and correct it, plus a check before each write. The note's
+// mental-model: the agent's working model of the user, in the user's words,
+// shown above the prompt, plus a check before each write. The note's
 // evolution is visible to the agent in the tool result and the system
-// prompt, and to Eren in the band.
+// prompt, and to the user in the band.
 
 const PLUGIN = 'mental-model'
 const NOTE_TOOL = `mcp__${PLUGIN}__note`
@@ -20,15 +20,11 @@ const isHidden = atom({ plugin: 'mental-model', key: 'isHidden' } as const, fals
 const showHistory = atom({ plugin: 'mental-model', key: 'showHistory' } as const, false)
 const remind = atom({ plugin: 'mental-model', key: 'remind' } as const, false)
 
+// The reminder, in the user's own phrasing. It rides beside the user's prompt
+// while no note exists, and after Remind until the note is rewritten.
 export const REMINDER =
-  `Write or update your working model of Eren with ${NOTE_TOOL}: ` +
-  'what he wants, in his words, and what is in his head. He reads it above the prompt.'
-
-// What the Remind button sends to Claude, as a prompt, the moment it is pressed.
-export const REMIND_PROMPT =
-  `Eren pressed Remind. Rewrite your working model of him now with ${NOTE_TOOL}, ` +
-  'from everything he has said in this conversation: what he wants, in his words, and what is in his head. ' +
-  'Then answer in one sentence what changed.'
+  `Write down/update your understanding of user's intent, knowledge and gaps using the \`${NOTE_TOOL}\` tool. ` +
+  "This will help you tailor your effort to user's needs, and help the user to catch drift early on."
 
 // Tools that only read. Every other tool call is a write and needs a check.
 const READ_TOOLS = new Set([
@@ -93,7 +89,7 @@ export function diffNotes(previous: Note | null, next: Pick<Note, 'want' | 'inHi
   return changes
 }
 
-const label = (field: Change['field']) => (field === 'want' ? 'what he wants' : 'what is in his head')
+const label = (field: Change['field']) => (field === 'want' ? 'intent' : 'knowledge')
 
 export function describeChanges(changes: Change[]): string {
   if (!changes.length) return 'unchanged'
@@ -114,10 +110,10 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'note',
       description:
-        "Write your working model of Eren for this conversation. Rewrite it when your understanding of him changes, not on every message. " +
-        'want: the outcome he wants, in his own words. ' +
-        'in_his_head: what he knows and believes about the state, and what he is missing that your reply must give him. ' +
-        'The result tells you what changed since the previous note.',
+        'Your working model of the user for this conversation. Rewrite it when your understanding changes, not on every message. ' +
+        "want: the outcome the user wants, in the user's own words. " +
+        'in_his_head: what the user knows and believes about the state, and what the user is missing. ' +
+        'The result says what changed since the previous note.',
       inputSchema: {
         type: 'object',
         properties: { want: { type: 'string' }, in_his_head: { type: 'string' } },
@@ -128,11 +124,11 @@ export const register: Register = on => {
       name: 'check',
       description:
         'Required before a write (a file edit, a shell command that changes state, a memory or task change, a send). ' +
-        'One check covers the listed targets until Eren sends his next message. ' +
+        "One check covers the listed targets until the user's next message. " +
         'targets: file paths, command fragments or tool names this check covers. ' +
-        'asked: the words of Eren that ask for this write, quoted, or "not asked". ' +
-        'amount: is this too much (things he did not ask for) or not enough (things he asked for and you leave undone)? Name them. ' +
-        'sentence: the one sentence that tells Eren the result, in his words.',
+        "asked: the user's words that ask for this write, quoted, or \"not asked\". " +
+        'amount: too much (not asked for) or not enough (asked for and left undone)? Name it. ' +
+        "sentence: the one sentence that tells the user the result, in the user's words.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -155,14 +151,13 @@ export const register: Register = on => {
     const previous = await read($, note)
     const changes = diffNotes(previous, { want, inHisHead })
     if (previous && !changes.length) {
-      return { result: `Note unchanged (v${previous.version}). Rewrite it only when your understanding of Eren changes.` }
+      return { result: `Note unchanged (v${previous.version}).` }
     }
     const entry: Note = { want, inHisHead, version: (previous?.version ?? 0) + 1, at: await $.clock.now() }
     if (previous) await update($, history, list => [...list, previous].slice(-HISTORY_CAP))
     await update($, note, () => entry)
     await update($, remind, () => false)
     await $.ui.invalidate('prompt.section')
-    await $.ui.status(`note v${entry.version}`)
     const summary = previous ? `Changed since v${previous.version}: ${describeChanges(changes)}.` : 'First note of this session.'
     return { result: `Note v${entry.version} written. ${summary}` }
   })
@@ -179,9 +174,8 @@ export const register: Register = on => {
     const entry: Check = { targets, asked, amount, sentence, at: await $.clock.now() }
     const list = await update($, checks, l => [...l, entry])
     const warning = /^not asked/i.test(asked)
-      ? ' Eren did not ask for this write. Do it only if his request cannot be done without it, and tell him.'
+      ? ' The user did not ask for this write. Do it only if the request cannot be done without it, and say so.'
       : ''
-    await $.ui.status(`${list.length} check${list.length === 1 ? '' : 's'} this message`)
     return { result: `Check ${list.length} recorded for: ${targets.join(', ')}.${warning}` }
   })
 
@@ -195,22 +189,23 @@ export const register: Register = on => {
     return {
       deny:
         `${PLUGIN}: no check covers this write (${target.length > 100 ? target.slice(0, 99) + '…' : target}). ` +
-        `Call ${CHECK_TOOL}: quote Eren's words that ask for it, say whether it is too much or not enough, ` +
-        'and write the one sentence that tells him the result. Then retry.',
+        `Call ${CHECK_TOOL}, then retry.`,
     }
   })
 
-  // A new message from Eren is a new request: earlier checks stop covering writes.
+  // A new message from the user is a new request: earlier checks stop covering writes.
   on('turn.start', async ($, e, next) => {
     if (e.text.trim()) await update($, checks, () => [])
     return next(e)
   })
 
-  // The reminder rides beside his prompt while no note exists yet.
+  // The reminder rides beside the user's prompt while no note exists, and
+  // after Remind until the note is rewritten.
   on('prompt.submit', async ($, e, next) => {
-    const fromEren = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
-    if (!fromEren) return next(e)
-    if ((await read($, note)) !== null) return next(e)
+    const fromUser = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    if (!fromUser) return next(e)
+    const missing = (await read($, note)) === null
+    if (!missing && !(await read($, remind))) return next(e)
     return next({ ...e, context: [...(e.context ?? []), REMINDER] })
   })
 
@@ -222,18 +217,18 @@ export const register: Register = on => {
     const past = await read($, history)
     const lines: string[] = []
     if (current) {
-      lines.push(`Your working model of Eren (plugin ${PLUGIN}, note v${current.version}):`)
-      lines.push(`What he wants: ${current.want}`)
-      lines.push(`What is in his head: ${current.inHisHead}`)
+      lines.push(`Your working model of the user (${PLUGIN}, note v${current.version}):`)
+      lines.push(`Intent: ${current.want}`)
+      lines.push(`Knowledge and gaps: ${current.inHisHead}`)
       const previous = past[past.length - 1]
       if (previous) lines.push(`Changed since v${previous.version}: ${describeChanges(diffNotes(previous, current))}`)
     } else {
-      lines.push(`Your working model of Eren (plugin ${PLUGIN}): not written yet. Write it with ${NOTE_TOOL}.`)
+      lines.push(`Your working model of the user (${PLUGIN}): not written yet. Write it with ${NOTE_TOOL}.`)
     }
     return { text: [section.text ?? '', lines.join('\n')].filter(Boolean).join('\n\n') }
   })
 
-  // What Eren sees above the prompt: the full note, its last change, the last
+  // What the user sees above the prompt: the full note, its last change, the last
   // check, and the history on request. Nothing is clipped.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
@@ -242,7 +237,7 @@ export const register: Register = on => {
       const { Box, Button, Text } = $.ui.resolve(e)
       return (
         <Box>
-          <Text dimColor>Claude's model of you is hidden. </Text>
+          <Text dimColor>Model hidden. </Text>
           <Button key="show" label="Show" hotkey="m" onPress={() => update($, isHidden, () => false)} />
         </Box>
       )
@@ -277,13 +272,9 @@ export const register: Register = on => {
           label={reminded ? 'Reminded ✓' : 'Remind'}
           variant={reminded ? 'primary' : undefined}
           hotkey="r"
-          onPress={async () => {
-            if (await read($, remind)) return
-            await update($, remind, () => true)
-            void $.prompt.submit({ text: REMIND_PROMPT })
-          }}
+          onPress={() => update($, remind, () => true)}
         />
-        <Text dimColor>{reminded ? '  Sent. Claude is rewriting the note.' : '  Wrong? Tell Claude.'}</Text>
+        <Text dimColor>  Wrong? Tell Claude.</Text>
       </Box>
     )
 

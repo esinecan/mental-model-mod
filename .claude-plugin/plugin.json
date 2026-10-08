@@ -2,6 +2,6 @@
   "name": "mental-model",
   "version": "0.3.0",
   "author": { "name": "esinecan" },
-  "description": "Keeps Claude's working model of Eren's intention, shows it above the prompt, and asks for a check before each write.",
+  "description": "The agent's working model of the user, shown above the prompt, and a check before each write.",
   "types": "./types/index.d.ts"
 }
