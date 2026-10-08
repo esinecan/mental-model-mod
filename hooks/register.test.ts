@@ -1,15 +1,20 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { REMINDER, describeChanges, diffNotes, isCovered, isWrite, targetOf } from './register'
+import { REMINDER, REMIND_PROMPT, describeChanges, diffNotes, isCovered, isWrite, targetOf } from './register'
 
 // The test's hooks stand for the engine beneath the mod: a clock, the
-// session state, the status line, and tool registration.
+// session state, the status line, tool registration and the prompt queue.
+const submitted: string[] = []
 function standIn(on: On) {
   const values = new Map<string, { value: unknown; version: number }>()
   const keyOf = (e: { plugin: string; key: string; id?: string }) => `${e.plugin}/${e.key}/${e.id ?? ''}`
 
   on('clock.now', () => ({ value: 1_000_000 }))
+  on('prompt.submit', ($, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
@@ -127,8 +132,17 @@ test('the band shows the whole note, its change and the last check, and its butt
   await ui.press({ key: 'history' })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /^v1 \(/ })).toBe(undefined)
+  submitted.length = 0
   await ui.press({ key: 'remind' })
   await ui.redraw()
+  expect(submitted).toEqual([REMIND_PROMPT])
+  expect((await ui.find({ key: 'remind' }))?.props.label).toBe('Reminded ✓')
+  await ui.press({ key: 'remind' })
+  await ui.redraw()
+  expect(submitted).toEqual([REMIND_PROMPT])
+  await $.tool.call({ ...NOTE, want: 'send three messages' })
+  await ui.redraw()
+  expect((await ui.find({ key: 'remind' }))?.props.label).toBe('Remind')
   await ui.press({ key: 'hide' })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBe(undefined)

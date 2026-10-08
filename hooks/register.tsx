@@ -24,6 +24,12 @@ export const REMINDER =
   `Write or update your working model of Eren with ${NOTE_TOOL}: ` +
   'what he wants, in his words, and what is in his head. He reads it above the prompt.'
 
+// What the Remind button sends to Claude, as a prompt, the moment it is pressed.
+export const REMIND_PROMPT =
+  `Eren pressed Remind. Rewrite your working model of him now with ${NOTE_TOOL}, ` +
+  'from everything he has said in this conversation: what he wants, in his words, and what is in his head. ' +
+  'Then answer in one sentence what changed.'
+
 // Tools that only read. Every other tool call is a write and needs a check.
 const READ_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'ToolSearch', 'WebFetch', 'WebSearch', 'ListAgents',
@@ -181,15 +187,11 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The reminder rides beside his prompt when no note exists yet, or once
-  // after he pressed Remind.
+  // The reminder rides beside his prompt while no note exists yet.
   on('prompt.submit', async ($, e, next) => {
     const fromEren = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     if (!fromEren) return next(e)
-    const missing = (await read($, note)) === null
-    const asked = await read($, remind)
-    if (!missing && !asked) return next(e)
-    if (asked) await update($, remind, () => false)
+    if ((await read($, note)) !== null) return next(e)
     return next({ ...e, context: [...(e.context ?? []), REMINDER] })
   })
 
@@ -221,6 +223,7 @@ export const register: Register = on => {
     const past = await read($, history)
     const list = await read($, checks)
     const open = await read($, showHistory)
+    const reminded = await read($, remind)
     const now = await $.clock.now()
     const { Box, Button, Text } = $.ui.resolve(e)
     const previous = past[past.length - 1]
@@ -235,8 +238,18 @@ export const register: Register = on => {
           <Button key="history" label={open ? 'Hide history' : `History (${past.length})`} hotkey="s" onPress={() => update($, showHistory, v => !v)} />
         ) : null}
         {past.length ? <Text> </Text> : null}
-        <Button key="remind" label="Remind" hotkey="r" onPress={() => update($, remind, () => true)} />
-        <Text dimColor>  Wrong? Tell Claude.</Text>
+        <Button
+          key="remind"
+          label={reminded ? 'Reminded ✓' : 'Remind'}
+          variant={reminded ? 'primary' : undefined}
+          hotkey="r"
+          onPress={async () => {
+            if (await read($, remind)) return
+            await update($, remind, () => true)
+            void $.prompt.submit({ text: REMIND_PROMPT })
+          }}
+        />
+        <Text dimColor>{reminded ? '  Sent. Claude is rewriting the note.' : '  Wrong? Tell Claude.'}</Text>
       </Box>
     )
 
