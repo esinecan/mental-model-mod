@@ -54,11 +54,30 @@ export function targetOf(tool: string, args: Record<string, unknown>): string {
   return tool
 }
 
+// An inline script (python -c, a heredoc, node -e) is a write only when its
+// text writes, deletes, moves or spawns. A script run by file path stays a write.
+const INLINE_SCRIPT = /(^|[;&|]\s*)(python3?|py|node|bun)\b[^;&|<]*?(\s-[ce]\s|\s-\s*<<|\s-\s*$|<<)/i
+const SCRIPT_MUTATION =
+  /open\((?:[^)]*,\s*(?:mode\s*=\s*)?)?['"][rb]*[wax+]['"]|\.write\(|write_text|write_bytes|writeFile|appendFile|unlink|\.remove\(|removedirs|rmtree|rmSync|rename|replace\(\s*['"][^'"]*['"]\s*\)\s*$|mkdir|makedirs|shutil\.|os\.system|subprocess|child_process|execSync|spawn\(|truncate|chmod|copyfile|copy2|move\(/
+
 export function isWrite(tool: string, args: Record<string, unknown>): boolean {
   if (tool === NOTE_TOOL || tool === CHECK_TOOL) return false
   if (READ_TOOLS.has(tool) || READ_MCP.test(tool)) return false
-  if (tool === 'Bash' || tool === 'PowerShell') return SHELL_MUTATION.test(String(args.command ?? ''))
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    const command = String(args.command ?? '')
+    if (INLINE_SCRIPT.test(command)) {
+      const rest = command.replace(INLINE_SCRIPT, '')
+      return SCRIPT_MUTATION.test(command) || SHELL_MUTATION.test(rest)
+    }
+    return SHELL_MUTATION.test(command)
+  }
   return true
+}
+
+// The first few targets of a check, for the band.
+export function fewTargets(targets: readonly string[], max = 3): string {
+  const shown = targets.slice(0, max).join(', ')
+  return targets.length > max ? `${shown} +${targets.length - max} more` : shown
 }
 
 export function isCovered(target: string, list: readonly Check[]): boolean {
@@ -217,8 +236,17 @@ export const register: Register = on => {
   // What Eren sees above the prompt: the full note, its last change, the last
   // check, and the history on request. Nothing is clipped.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
     const hidden = await read($, isHidden)
-    if (hidden || e.props.hasSurvey) return next(e)
+    if (hidden) {
+      const { Box, Button, Text } = $.ui.resolve(e)
+      return (
+        <Box>
+          <Text dimColor>Claude's model of you is hidden. </Text>
+          <Button key="show" label="Show" hotkey="m" onPress={() => update($, isHidden, () => false)} />
+        </Box>
+      )
+    }
     const current = await read($, note)
     const past = await read($, history)
     const list = await read($, checks)
@@ -235,7 +263,13 @@ export const register: Register = on => {
         <Button key="hide" label="Hide" hotkey="h" onPress={() => update($, isHidden, () => true)} />
         <Text> </Text>
         {past.length ? (
-          <Button key="history" label={open ? 'Hide history' : `History (${past.length})`} hotkey="s" onPress={() => update($, showHistory, v => !v)} />
+          <Button
+            key="history"
+            label={open ? 'Hide history' : `History (${past.length})`}
+            variant={open ? 'primary' : undefined}
+            hotkey="s"
+            onPress={() => update($, showHistory, v => !v)}
+          />
         ) : null}
         {past.length ? <Text> </Text> : null}
         <Button
@@ -282,7 +316,7 @@ export const register: Register = on => {
         {last ? (
           <Text wrap="wrap">
             <Text color={notAsked ? 'warning' : 'subtle'}>{notAsked ? 'NOT ASKED · ' : `Check ${list.length} · `}</Text>
-            <Text dimColor>{`you said ${last.asked} → targets: ${last.targets.join(', ')} → `}</Text>
+            <Text dimColor>{`you said ${last.asked} → ${fewTargets(last.targets)} → `}</Text>
             <Text>{last.sentence}</Text>
           </Text>
         ) : null}

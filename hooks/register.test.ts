@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { REMINDER, REMIND_PROMPT, describeChanges, diffNotes, isCovered, isWrite, targetOf } from './register'
+import { REMINDER, REMIND_PROMPT, describeChanges, diffNotes, fewTargets, isCovered, isWrite, targetOf } from './register'
 
 // The test's hooks stand for the engine beneath the mod: a clock, the
 // session state, the status line, tool registration and the prompt queue.
@@ -58,6 +58,21 @@ test('reads pass, writes are writes, stderr redirects are reads', () => {
   expect(isWrite('Write', { file_path: 'a' })).toBe(true)
   expect(isWrite('mcp__memory-store__memory_update', {})).toBe(true)
   expect(isWrite('mcp__mental-model__check', {})).toBe(false)
+})
+
+test('an inline script is a write only when its text writes', () => {
+  expect(isWrite('Bash', { command: "python -c \"import json;print(json.load(open('a.json')))\"" })).toBe(false)
+  expect(isWrite('Bash', { command: "cd x && python -X utf8 - <<'EOF'\nfor l in open('a'):\n    print(l)\nEOF" })).toBe(false)
+  expect(isWrite('Bash', { command: "python - <<'EOF'\nopen('a','w').write('x')\nEOF" })).toBe(true)
+  expect(isWrite('Bash', { command: "python -c \"import shutil;shutil.rmtree('x')\"" })).toBe(true)
+  expect(isWrite('Bash', { command: 'node -e "console.log(1)"' })).toBe(false)
+  expect(isWrite('Bash', { command: 'python script.py' })).toBe(true)
+  expect(isWrite('Bash', { command: 'python -c "print(1)" > out.txt' })).toBe(true)
+})
+
+test('the band keeps long target lists short', () => {
+  expect(fewTargets(['a', 'b'])).toBe('a, b')
+  expect(fewTargets(['a', 'b', 'c', 'd', 'e'])).toBe('a, b, c +2 more')
 })
 
 test('a check covers its targets only', () => {
@@ -146,6 +161,10 @@ test('the band shows the whole note, its change and the last check, and its butt
   await ui.press({ key: 'hide' })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBe(undefined)
+  expect(await ui.find({ key: 'show' })).toBeDefined()
+  await ui.press({ key: 'show' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /send three messages/ })).toBeDefined()
   await ui.unmount()
 })
 
