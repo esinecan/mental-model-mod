@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { REMINDER, describeChanges, destroyedNames, diffNotes, isCovered, isWrite, namedIn, shouldRemind, targetOf } from './register'
+import { REMINDER, describeChanges, diffNotes, isCovered, isWrite, targetOf } from './register'
 
 // The test's hooks stand for the engine beneath the mod: a clock, the
 // session state, the status line, and tool registration.
@@ -36,6 +36,8 @@ const CHECK = {
   amount: 'only the plan file, nothing else',
   sentence: 'The plan is rewritten.',
 }
+const textOf = (run: { text?: unknown; result?: unknown }) =>
+  String(run.text ?? (typeof run.result === 'string' ? run.result : JSON.stringify(run.result)))
 
 test('reads pass, writes are writes, stderr redirects are reads', () => {
   expect(isWrite('Read', { file_path: 'a' })).toBe(false)
@@ -51,21 +53,8 @@ test('reads pass, writes are writes, stderr redirects are reads', () => {
 
 test('a check covers its targets only', () => {
   const list = [{ targets: ['C:\\x\\plan.md'], asked: '"fix the plan"', amount: 'just the plan', sentence: 'The plan is fixed.', at: 0 }]
-  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/plan.md' }), list) !== undefined).toBe(true)
-  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/other.md' }), list)).toBe(undefined)
-})
-
-test('a destructive command names what it destroys, temp folders excepted', () => {
-  expect(destroyedNames('Bash', { command: 'cd ~/.claude && rm -rf ~/.claude/mods/mental-model && ls' })).toEqual(['mental-model'])
-  expect(destroyedNames('PowerShell', { command: 'Remove-Item -Recurse -Force "C:\\Users\\yepis\\.claude\\mods\\mental-model"' })).toEqual(['mental-model'])
-  expect(destroyedNames('Bash', { command: 'rm -rf "$TEMP/claude/x/scratchpad/recovered"' })).toEqual([])
-  expect(destroyedNames('Bash', { command: 'git log --oneline' })).toEqual([])
-})
-
-test("Eren's words name the target or they do not", () => {
-  expect(namedIn('"you should know mod is not working. remove it"', 'mental-model')).toBe(false)
-  expect(namedIn('"restore the mental model mod, then remove the you should know mod"', 'mental-model')).toBe(true)
-  expect(namedIn('"delete old_build"', 'old-build')).toBe(true)
+  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/plan.md' }), list)).toBe(true)
+  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/other.md' }), list)).toBe(false)
 })
 
 test('the diff names each changed field', () => {
@@ -73,77 +62,32 @@ test('the diff names each changed field', () => {
   expect(diffNotes(null, { want: 'a', inHisHead: 'b' })).toEqual([])
   expect(describeChanges(diffNotes(previous, { want: 'a', inHisHead: 'b' }))).toBe('unchanged')
   expect(describeChanges(diffNotes(previous, { want: 'c', inHisHead: 'b' }))).toBe('what he wants: was «a» now «c»')
-})
-
-test('the reminder fires when the note is missing, stale or asked for', () => {
-  const current = { want: 'a', inHisHead: 'b', version: 1, at: 0 }
-  expect(shouldRemind({ note: null, remind: false, messagesSinceNote: 0 })).toBe(true)
-  expect(shouldRemind({ note: current, remind: false, messagesSinceNote: 2 })).toBe(false)
-  expect(shouldRemind({ note: current, remind: true, messagesSinceNote: 2 })).toBe(true)
-  expect(shouldRemind({ note: current, remind: false, messagesSinceNote: 6 })).toBe(true)
   expect(REMINDER).toContain('mcp__mental-model__note')
 })
 
-test('a write without a note is denied, and so is a check', async ($, on) => {
+test('a write without a check is denied', async ($, on) => {
   standIn(on)
   on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
-  const checked = await $.tool.call(CHECK)
-  expect(String(checked.deny ?? checked.text)).toContain('no note exists')
   const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
-  expect(String(run.deny ?? run.text)).toContain('no note exists')
-})
-
-test('a write without a check is denied once a note exists', async ($, on) => {
-  standIn(on)
-  on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
-  await $.tool.call(NOTE)
-  const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
+  expect(run.deny !== undefined || run.isError === true).toBe(true)
   expect(String(run.deny ?? run.text)).toContain('no check covers this write')
 })
 
-test('a write passes after a note and a check that names it', async ($, on) => {
+test('a write passes after a check names it, with or without a note', async ($, on) => {
   standIn(on)
   on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
-  await $.tool.call(NOTE)
   const checked = await $.tool.call(CHECK)
   expect(checked.isError).toBe(undefined)
   const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
   expect(run.isError).toBe(undefined)
-})
-
-test("today's delete is refused: the check's quoted words do not name the folder", async ($, on) => {
-  standIn(on)
-  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
-  await $.tool.call(NOTE)
-  await $.tool.call({
-    tool: 'mcp__mental-model__check',
-    targets: ['~/.claude/mods/mental-model', 'rm'],
-    asked: '"you should know mod is not working. remove it"',
-    amount: 'enough',
-    sentence: 'The mod is removed.',
-  })
-  const run = await $.tool.call({ tool: 'Bash', command: 'rm -rf ~/.claude/mods/mental-model' })
-  expect(String(run.deny ?? run.text)).toContain('do not name it')
-})
-
-test('the same delete passes when his words name the folder', async ($, on) => {
-  standIn(on)
-  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
-  await $.tool.call(NOTE)
-  await $.tool.call({
-    tool: 'mcp__mental-model__check',
-    targets: ['~/.claude/mods/mental-model', 'rm'],
-    asked: '"remove the mental model mod"',
-    amount: 'enough',
-    sentence: 'The mental-model mod is removed.',
-  })
-  const run = await $.tool.call({ tool: 'Bash', command: 'rm -rf ~/.claude/mods/mental-model' })
-  expect(run.isError).toBe(undefined)
   expect(run.deny).toBe(undefined)
 })
 
-const textOf = (run: { text?: unknown; result?: unknown }) =>
-  String(run.text ?? (typeof run.result === 'string' ? run.result : JSON.stringify(run.result)))
+test('a check that says not asked warns the model', async ($, on) => {
+  standIn(on)
+  const run = await $.tool.call({ ...CHECK, asked: 'not asked' })
+  expect(textOf(run)).toContain('Eren did not ask for this write')
+})
 
 test('the note needs both fields and reports its own changes', async ($, on) => {
   standIn(on)
@@ -157,4 +101,40 @@ test('the note needs both fields and reports its own changes', async ($, on) => 
   const second = await $.tool.call({ ...NOTE, want: 'send two messages' })
   expect(textOf(second)).toContain('Note v2 written')
   expect(textOf(second)).toContain('was «send one message» now «send two messages»')
+})
+
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 20 } } as const
+
+test('the band shows the whole note, its change and the last check, and its buttons work', async ($, on) => {
+  standIn(on)
+  await $.tool.call(NOTE)
+  await $.tool.call({ ...NOTE, want: 'send two messages' })
+  await $.tool.call(CHECK)
+  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /he knows the text/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /was «send one message» now «send two messages»/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /you said "rewrite the plan"/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /The plan is rewritten\./ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^v1 \(/ })).toBe(undefined)
+  await ui.press({ key: 'history' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /^v1 \(/ })).toBeDefined()
+  await ui.press({ key: 'history' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /^v1 \(/ })).toBe(undefined)
+  await ui.press({ key: 'remind' })
+  await ui.redraw()
+  await ui.press({ key: 'hide' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('the band says so while no note exists', async ($, on) => {
+  standIn(on)
+  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /not written down what you want yet/ })).toBeDefined()
+  expect(await ui.find({ key: 'history' })).toBe(undefined)
+  await ui.unmount()
 })

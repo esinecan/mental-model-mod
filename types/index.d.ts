@@ -30,7 +30,6 @@ declare module 'claude-code' {
       isHidden: boolean
       showHistory: boolean
       remind: boolean
-      messagesSinceNote: number
     }
   }
 }
