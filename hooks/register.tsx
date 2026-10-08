@@ -58,7 +58,7 @@ export function targetOf(tool: string, args: Record<string, unknown>): string {
 // text writes, deletes, moves or spawns. A script run by file path stays a write.
 const INLINE_SCRIPT = /(^|[;&|]\s*)(python3?|py|node|bun)\b[^;&|<]*?(\s-[ce]\s|\s-\s*<<|\s-\s*$|<<)/i
 const SCRIPT_MUTATION =
-  /open\((?:[^)]*,\s*(?:mode\s*=\s*)?)?['"][rb]*[wax+]['"]|\.write\(|write_text|write_bytes|writeFile|appendFile|unlink|\.remove\(|removedirs|rmtree|rmSync|rename|replace\(\s*['"][^'"]*['"]\s*\)\s*$|mkdir|makedirs|shutil\.|os\.system|subprocess|child_process|execSync|spawn\(|truncate|chmod|copyfile|copy2|move\(/
+  /(?:\.open\(\s*|(?<![.\w])open\([^)]*,\s*(?:mode\s*=\s*)?)['"][rb]*[wax+]['"]|\.write\(|write_text|write_bytes|writeFile|appendFile|unlink|\.remove\(|removedirs|rmtree|rmSync|rename|replace\(\s*['"][^'"]*['"]\s*\)\s*$|mkdir|makedirs|shutil\.|os\.system|subprocess|child_process|execSync|spawn\(|truncate|chmod|copyfile|copy2|move\(/
 
 export function isWrite(tool: string, args: Record<string, unknown>): boolean {
   if (tool === NOTE_TOOL || tool === CHECK_TOOL) return false
