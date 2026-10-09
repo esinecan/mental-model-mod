@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { Register, RenderElement } from 'claude-code'
 
 import type { Change, Check, Note } from '../types'
 
@@ -228,98 +228,109 @@ export const register: Register = on => {
     return { text: [section.text ?? '', lines.join('\n')].filter(Boolean).join('\n\n') }
   })
 
-  // What the user sees above the prompt: the full note, its last change, the last
-  // check, and the history on request. Nothing is clipped.
+  // What the user sees above the prompt. The header row carries the title,
+  // the version and the buttons, so the buttons stay at the top when history
+  // opens below. Each row is a label column and a text column. Nothing is clipped.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const current = await read($, note)
+    const past = await read($, history)
+    const previous = past[past.length - 1]
+    const changed = current && previous ? diffNotes(previous, current).map(c => label(c.field)).join(', ') : ''
+    const stamp = current ? `v${current.version}${changed ? ` · changed: ${changed}` : ''}` : ''
+
     const hidden = await read($, isHidden)
     if (hidden) {
-      const { Box, Button, Text } = $.ui.resolve(e)
       return (
         <Box>
-          <Text dimColor>Model hidden. </Text>
-          <Button key="show" label="Show" hotkey="m" onPress={() => update($, isHidden, () => false)} />
+          <Text dimColor>{`Model hidden${stamp ? ` · ${stamp}` : ''}  `}</Text>
+          <Button key="show" label="+ Show" hotkey="m" plain onPress={() => update($, isHidden, () => false)} />
         </Box>
       )
     }
-    const current = await read($, note)
-    const past = await read($, history)
+
     const list = await read($, checks)
     const open = await read($, showHistory)
     const reminded = await read($, remind)
     const now = await $.clock.now()
-    const { Box, Button, Text } = $.ui.resolve(e)
-    const previous = past[past.length - 1]
     const last = list[list.length - 1]
     const notAsked = last ? /^not asked/i.test(last.asked) : false
 
-    const buttons = (
-      <Box>
-        <Button key="hide" label="Hide" hotkey="h" onPress={() => update($, isHidden, () => true)} />
-        <Text> </Text>
-        {past.length ? (
-          <Button
-            key="history"
-            label={open ? 'Hide history' : `History (${past.length})`}
-            variant={open ? 'primary' : undefined}
-            hotkey="s"
-            onPress={() => update($, showHistory, v => !v)}
-          />
-        ) : null}
-        {past.length ? <Text> </Text> : null}
-        <Button
-          key="remind"
-          label={reminded ? 'Reminded ✓' : 'Remind'}
-          variant={reminded ? 'primary' : undefined}
-          hotkey="r"
-          onPress={() => update($, remind, () => true)}
-        />
-        <Text dimColor>  Wrong? Tell Claude.</Text>
+    const LABEL = 12
+    const row = (key: string, head: RenderElement, body: RenderElement) => (
+      <Box key={key}>
+        <Box width={LABEL} flexShrink={0}>{head}</Box>
+        <Box flexGrow={1}>{body}</Box>
+      </Box>
+    )
+
+    // A small glyph button: the word appears under the pointer.
+    const glyph = (key: string, hotkey: string, icon: string, word: string, onPress: () => void, primary = false) => (
+      <Box key={`${key}-hover`} marginLeft={1}>
+        <Button key={key} label={icon} hotkey={hotkey} plain variant={primary ? 'primary' : undefined} onPress={onPress} />
+        <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
+          <Text backgroundColor="subtle" color="inverseText">{` ${word} `}</Text>
+        </Box>
+      </Box>
+    )
+
+    const header = (
+      <Box justifyContent="space-between">
+        <Box>
+          <Text bold>Claude's model of you</Text>
+          {current ? <Text dimColor>{`  ${stamp} · ${ago(now, current.at)}`}</Text> : null}
+        </Box>
+        <Box>
+          <Text dimColor>Wrong? Tell Claude.</Text>
+          {glyph('hide', 'h', '−', 'Hide', () => update($, isHidden, () => true))}
+          {past.length
+            ? glyph('history', 's', '≡', open ? 'Hide history' : `History (${past.length})`, () => update($, showHistory, v => !v), open)
+            : null}
+          {glyph('remind', 'r', reminded ? '✓' : '↻', reminded ? 'Reminded' : 'Remind', () => update($, remind, () => true), reminded)}
+        </Box>
       </Box>
     )
 
     if (!current) {
       return (
         <Box flexDirection="column">
-          <Text wrap="wrap">Claude has not written down what you want yet.</Text>
-          {buttons}
+          {header}
+          <Text dimColor wrap="wrap">Claude has not written down what you want yet.</Text>
         </Box>
       )
     }
 
     return (
       <Box flexDirection="column">
-        <Box>
-          <Text bold>Claude's model of you</Text>
-          <Text dimColor>{`  v${current.version} · ${ago(now, current.at)}`}</Text>
-        </Box>
-        <Text wrap="wrap">
-          <Text bold>You want: </Text>
-          {current.want}
-        </Text>
-        <Text wrap="wrap">
-          <Text bold>You know / are missing: </Text>
-          {current.inHisHead}
-        </Text>
-        {previous ? (
-          <Text dimColor wrap="wrap">{`Changed from v${previous.version}: ${describeChanges(diffNotes(previous, current))}`}</Text>
-        ) : null}
-        {last ? (
-          <Text wrap="wrap">
-            <Text color={notAsked ? 'warning' : 'subtle'}>{notAsked ? 'NOT ASKED · ' : `Check ${list.length} · `}</Text>
-            <Text dimColor>{`you said ${last.asked} → ${fewTargets(last.targets)} → `}</Text>
-            <Text>{last.sentence}</Text>
-          </Text>
-        ) : null}
+        {header}
+        {row('want', <Text bold>Want</Text>, <Text wrap="wrap">{current.want}</Text>)}
+        {row('knows', <Text bold>Knows</Text>, <Text wrap="wrap">{current.inHisHead}</Text>)}
+        {last
+          ? row(
+              'check',
+              <Text color={notAsked ? 'warning' : 'subtle'}>{notAsked ? 'NOT ASKED' : 'Write check'}</Text>,
+              <Text wrap="wrap">
+                <Text dimColor>you asked </Text>
+                <Text>{last.asked}</Text>
+                <Text dimColor>{` · touching ${fewTargets(last.targets)} · will say: `}</Text>
+                <Text>{last.sentence}</Text>
+              </Text>,
+            )
+          : null}
+        {open ? <Text dimColor>History, newest first</Text> : null}
         {open
           ? past
               .slice()
               .reverse()
-              .map(n => (
-                <Text key={`v${n.version}`} dimColor wrap="wrap">{`v${n.version} (${ago(now, n.at)}): ${n.want} — ${n.inHisHead}`}</Text>
-              ))
+              .map(n =>
+                row(
+                  `v${n.version}`,
+                  <Text dimColor>{`v${n.version} · ${ago(now, n.at)}`}</Text>,
+                  <Text dimColor wrap="wrap">{`${n.want} — ${n.inHisHead}`}</Text>,
+                ),
+              )
           : null}
-        {buttons}
       </Box>
     )
   })
