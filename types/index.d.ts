@@ -13,20 +13,13 @@ export type Change = {
   now: string
 }
 
-export type Check = {
-  targets: string[]
-  asked: string
-  amount: string
-  sentence: string
-  at: number
-}
-
 declare module 'claude-code' {
   interface PluginState {
     'mental-model': {
       note: Note | null
       history: Note[]
-      checks: Check[]
+      noteFresh: boolean
+      nudged: boolean
       isHidden: boolean
       showHistory: boolean
       remind: boolean

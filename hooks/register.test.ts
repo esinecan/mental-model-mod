@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { describeChanges, diffNotes, fewTargets, isCovered, isWrite, targetOf } from './register'
+import { NUDGE, describeChanges, diffNotes, isWrite } from './register'
 
 // The test's hooks stand for the engine beneath the mod: a clock, the
 // session state, the status line, and tool registration.
@@ -33,13 +33,6 @@ function standIn(on: On) {
 
 const WRITE_RESULT = { result: { type: 'create', filePath: 'C:/x/plan.md', content: 'y' } }
 const NOTE = { tool: 'mcp__mental-model__note', want: 'send one message', in_his_head: 'he knows the text' }
-const CHECK = {
-  tool: 'mcp__mental-model__check',
-  targets: ['plan.md'],
-  asked: '"rewrite the plan"',
-  amount: 'only the plan file, nothing else',
-  sentence: 'The plan is rewritten.',
-}
 const textOf = (run: { text?: unknown; result?: unknown }) =>
   String(run.text ?? (typeof run.result === 'string' ? run.result : JSON.stringify(run.result)))
 
@@ -52,7 +45,7 @@ test('reads pass, writes are writes, stderr redirects are reads', () => {
   expect(isWrite('Bash', { command: 'rm -rf x' })).toBe(true)
   expect(isWrite('Write', { file_path: 'a' })).toBe(true)
   expect(isWrite('mcp__memory-store__memory_update', {})).toBe(true)
-  expect(isWrite('mcp__mental-model__check', {})).toBe(false)
+  expect(isWrite('mcp__mental-model__note', {})).toBe(false)
 })
 
 test('an inline script is a write only when its text writes', () => {
@@ -65,17 +58,6 @@ test('an inline script is a write only when its text writes', () => {
   expect(isWrite('Bash', { command: 'python -c "print(1)" > out.txt' })).toBe(true)
 })
 
-test('the band keeps long target lists short', () => {
-  expect(fewTargets(['a', 'b'])).toBe('a, b')
-  expect(fewTargets(['a', 'b', 'c', 'd', 'e'])).toBe('a, b, c +2 more')
-})
-
-test('a check covers its targets only', () => {
-  const list = [{ targets: ['C:\\x\\plan.md'], asked: '"fix the plan"', amount: 'just the plan', sentence: 'The plan is fixed.', at: 0 }]
-  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/plan.md' }), list)).toBe(true)
-  expect(isCovered(targetOf('Edit', { file_path: 'C:/x/other.md' }), list)).toBe(false)
-})
-
 test('the diff names each changed field', () => {
   const previous = { want: 'a', inHisHead: 'b', version: 1, at: 0 }
   expect(diffNotes(null, { want: 'a', inHisHead: 'b' })).toEqual([])
@@ -83,28 +65,25 @@ test('the diff names each changed field', () => {
   expect(describeChanges(diffNotes(previous, { want: 'c', inHisHead: 'b' }))).toBe('intent: was «a» now «c»')
 })
 
-test('a write without a check is denied', async ($, on) => {
+test('a write runs without a note and carries one nudge per turn', async ($, on) => {
   standIn(on)
   on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
-  const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
-  expect(run.deny !== undefined || run.isError === true).toBe(true)
-  expect(String(run.deny ?? run.text)).toContain('no check covers this write')
+  const first = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
+  expect(first.deny).toBe(undefined)
+  expect(first.isError).toBe(undefined)
+  expect((first.context ?? []).includes(NUDGE)).toBe(true)
+  const second = await $.tool.call({ tool: 'Write', file_path: 'C:/x/other.md', content: 'y' })
+  expect(second.deny).toBe(undefined)
+  expect((second.context ?? []).includes(NUDGE)).toBe(false)
 })
 
-test('a write passes after a check names it, with or without a note', async ($, on) => {
+test('a write after a note in the same turn carries no nudge', async ($, on) => {
   standIn(on)
   on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
-  const checked = await $.tool.call(CHECK)
-  expect(checked.isError).toBe(undefined)
+  await $.tool.call(NOTE)
   const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
-  expect(run.isError).toBe(undefined)
   expect(run.deny).toBe(undefined)
-})
-
-test('a check that says not asked warns the model', async ($, on) => {
-  standIn(on)
-  const run = await $.tool.call({ ...CHECK, asked: 'not asked' })
-  expect(textOf(run)).toContain('The user did not ask for this write')
+  expect((run.context ?? []).includes(NUDGE)).toBe(false)
 })
 
 test('the note needs both fields and reports its own changes', async ($, on) => {
@@ -123,18 +102,14 @@ test('the note needs both fields and reports its own changes', async ($, on) => 
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 20 } } as const
 
-for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the band shows the whole note, which field changed and the last check, and its glyph buttons work`, async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the band shows the whole note and which field changed, and its glyph buttons work`, async ($, on) => {
   standIn(on)
   await $.tool.call(NOTE)
   await $.tool.call({ ...NOTE, want: 'send two messages' })
-  await $.tool.call(CHECK)
   const ui = await $.ui.mount({ plugin: 'mental-model', surface, ...BAND })
   expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /he knows the text/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /changed: intent/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^"rewrite the plan"$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /touching plan\.md/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /The plan is rewritten\./ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^v1 · / })).toBe(undefined)
   await ui.press({ key: 'history' })
   await ui.redraw()

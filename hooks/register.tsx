@@ -1,21 +1,22 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, RenderElement } from 'claude-code'
 
-import type { Change, Check, Note } from '../types'
+import type { Change, Note } from '../types'
 
 // mental-model: the agent's working model of the user, in the user's words,
-// shown above the prompt, plus a check before each write. The note's
+// shown above the prompt, plus one nudge per turn to rewrite it before a
+// string of writes. Nothing blocks a write. The note's
 // evolution is visible to the agent in the tool result and the system
 // prompt, and to the user in the band.
 
 const PLUGIN = 'mental-model'
 const NOTE_TOOL = `mcp__${PLUGIN}__note`
-const CHECK_TOOL = `mcp__${PLUGIN}__check`
 const HISTORY_CAP = 12
 
 const note = atom({ plugin: 'mental-model', key: 'note' } as const, null)
 const history = atom({ plugin: 'mental-model', key: 'history' } as const, [])
-const checks = atom({ plugin: 'mental-model', key: 'checks' } as const, [])
+const noteFresh = atom({ plugin: 'mental-model', key: 'noteFresh' } as const, false)
+const nudged = atom({ plugin: 'mental-model', key: 'nudged' } as const, false)
 const isHidden = atom({ plugin: 'mental-model', key: 'isHidden' } as const, false)
 const showHistory = atom({ plugin: 'mental-model', key: 'showHistory' } as const, false)
 const remind = atom({ plugin: 'mental-model', key: 'remind' } as const, false)
@@ -26,7 +27,13 @@ export const REMINDER =
   `Write down/update your understanding of user's intent, knowledge and gaps using the \`${NOTE_TOOL}\` tool. ` +
   "This will help you tailor your effort to user's needs, and help the user to catch drift early on."
 
-// Tools that only read. Every other tool call is a write and needs a check.
+// Rides on the first write of a turn whose note predates the user's last
+// message. A recommendation: the write has already run.
+export const NUDGE =
+  `${PLUGIN}: your note of the user predates the user's last message. ` +
+  `If what the user wants, knows or is missing has changed, rewrite it with ${NOTE_TOOL} before continuing this string of writes.`
+
+// Tools that only read. Every other tool call is a write.
 const READ_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'ToolSearch', 'WebFetch', 'WebSearch', 'ListAgents',
   'ReadNotifications', 'AskUserQuestion', 'Skill', 'Monitor', 'Agent',
@@ -41,15 +48,6 @@ const SHELL_MUTATION =
 
 const norm = (s: string) => s.replace(/\\/g, '/').toLowerCase()
 
-// What a check's target is matched against: the file for a file tool, the
-// command for a shell, the tool name for everything else.
-export function targetOf(tool: string, args: Record<string, unknown>): string {
-  if (typeof args.file_path === 'string') return args.file_path
-  if (typeof args.notebook_path === 'string') return args.notebook_path
-  if (tool === 'Bash' || tool === 'PowerShell') return String(args.command ?? '')
-  return tool
-}
-
 // An inline script (python -c, a heredoc, node -e) is a write only when its
 // text writes, deletes, moves or spawns. A script run by file path stays a write.
 const INLINE_SCRIPT = /(^|[;&|]\s*)(python3?|py|node|bun)\b[^;&|<]*?(\s-[ce]\s|\s-\s*<<|\s-\s*$|<<)/i
@@ -57,7 +55,7 @@ const SCRIPT_MUTATION =
   /(?:\.open\(\s*|(?<![.\w])open\([^)]*,\s*(?:mode\s*=\s*)?)['"][rb]*[wax+]['"]|\.write\(|write_text|write_bytes|writeFile|appendFile|unlink|\.remove\(|removedirs|rmtree|rmSync|rename|replace\(\s*['"][^'"]*['"]\s*\)\s*$|mkdir|makedirs|shutil\.|os\.system|subprocess|child_process|execSync|spawn\(|truncate|chmod|copyfile|copy2|move\(/
 
 export function isWrite(tool: string, args: Record<string, unknown>): boolean {
-  if (tool === NOTE_TOOL || tool === CHECK_TOOL) return false
+  if (tool === NOTE_TOOL) return false
   if (READ_TOOLS.has(tool) || READ_MCP.test(tool)) return false
   if (tool === 'Bash' || tool === 'PowerShell') {
     const command = String(args.command ?? '')
@@ -68,17 +66,6 @@ export function isWrite(tool: string, args: Record<string, unknown>): boolean {
     return SHELL_MUTATION.test(command)
   }
   return true
-}
-
-// The first few targets of a check, for the band.
-export function fewTargets(targets: readonly string[], max = 3): string {
-  const shown = targets.slice(0, max).join(', ')
-  return targets.length > max ? `${shown} +${targets.length - max} more` : shown
-}
-
-export function isCovered(target: string, list: readonly Check[]): boolean {
-  const t = norm(target)
-  return list.some(c => c.targets.some(x => x.trim() && t.includes(norm(x.trim()))))
 }
 
 export function diffNotes(previous: Note | null, next: Pick<Note, 'want' | 'inHisHead'>): Change[] {
@@ -110,7 +97,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'note',
       description:
-        'Your working model of the user for this conversation. Rewrite it when your understanding changes, not on every message. ' +
+        'Your working model of the user for this conversation. Rewrite it when your understanding changes, not on every message, and before a string of writes when it has. ' +
         "want: the outcome the user wants, in the user's own words. " +
         'in_his_head: what the user knows and believes about the state, and what the user is missing. ' +
         'The result says what changed since the previous note.',
@@ -118,26 +105,6 @@ export const register: Register = on => {
         type: 'object',
         properties: { want: { type: 'string' }, in_his_head: { type: 'string' } },
         required: ['want', 'in_his_head'],
-      },
-    })
-    await $.tool.register({
-      name: 'check',
-      description:
-        'Required before a write (a file edit, a shell command that changes state, a memory or task change, a send). ' +
-        "One check covers the listed targets until the user's next message. " +
-        'targets: file paths, command fragments or tool names this check covers. ' +
-        "asked: the user's words that ask for this write, quoted, or \"not asked\". " +
-        'amount: too much (not asked for) or not enough (asked for and left undone)? Name it. ' +
-        "sentence: the one sentence that tells the user the result, in the user's words.",
-      inputSchema: {
-        type: 'object',
-        properties: {
-          targets: { type: 'array', items: { type: 'string' } },
-          asked: { type: 'string' },
-          amount: { type: 'string' },
-          sentence: { type: 'string' },
-        },
-        required: ['targets', 'asked', 'amount', 'sentence'],
       },
     })
     return result
@@ -150,6 +117,7 @@ export const register: Register = on => {
     if (!want || !inHisHead) return { deny: `${NOTE_TOOL}: want and in_his_head are both required.` }
     const previous = await read($, note)
     const changes = diffNotes(previous, { want, inHisHead })
+    await update($, noteFresh, () => true)
     if (previous && !changes.length) {
       return { result: `Note unchanged (v${previous.version}).` }
     }
@@ -162,40 +130,26 @@ export const register: Register = on => {
     return { result: `Note v${entry.version} written. ${summary}` }
   })
 
-  on('tool.call', { tool: CHECK_TOOL }, async ($, e) => {
-    const args = e as unknown as Record<string, unknown>
-    const targets = Array.isArray(args.targets) ? args.targets.map(String).filter(s => s.trim()) : []
-    const asked = String(args.asked ?? '').trim()
-    const amount = String(args.amount ?? '').trim()
-    const sentence = String(args.sentence ?? '').trim()
-    if (!targets.length || !asked || !amount || !sentence) {
-      return { deny: `${CHECK_TOOL}: targets, asked, amount and sentence are all required.` }
-    }
-    const entry: Check = { targets, asked, amount, sentence, at: await $.clock.now() }
-    const list = await update($, checks, l => [...l, entry])
-    const warning = /^not asked/i.test(asked)
-      ? ' The user did not ask for this write. Do it only if the request cannot be done without it, and say so.'
-      : ''
-    return { result: `Check ${list.length} recorded for: ${targets.join(', ')}.${warning}` }
-  })
-
-  // The gate: a write in the main loop needs a check that covers its target.
+  // The nudge: the first write of a turn whose note predates the user's
+  // last message carries a recommendation to rewrite the note. The write runs.
   on('tool.call', async ($, e, next) => {
     const args = e as unknown as Record<string, unknown>
     const inMainLoop = (e as { agentId?: string }).agentId === undefined
     if (!inMainLoop || !isWrite(e.tool, args)) return next(e)
-    const target = targetOf(e.tool, args)
-    if (isCovered(target, await read($, checks))) return next(e)
-    return {
-      deny:
-        `${PLUGIN}: no check covers this write (${target.length > 100 ? target.slice(0, 99) + '…' : target}). ` +
-        `Call ${CHECK_TOOL}, then retry.`,
-    }
+    if ((await read($, noteFresh)) || (await read($, nudged))) return next(e)
+    await update($, nudged, () => true)
+    const answer = await next(e)
+    if (answer.deny !== undefined) return answer
+    return { ...answer, context: [...(answer.context ?? []), NUDGE] }
   })
 
-  // A new message from the user is a new request: earlier checks stop covering writes.
+  // A new message from the user is a new request: the note is stale until
+  // rewritten, and the nudge may fire once more.
   on('turn.start', async ($, e, next) => {
-    if (e.text.trim()) await update($, checks, () => [])
+    if (e.text.trim()) {
+      await update($, noteFresh, () => false)
+      await update($, nudged, () => false)
+    }
     return next(e)
   })
 
@@ -250,12 +204,9 @@ export const register: Register = on => {
       )
     }
 
-    const list = await read($, checks)
     const open = await read($, showHistory)
     const reminded = await read($, remind)
     const now = await $.clock.now()
-    const last = list[list.length - 1]
-    const notAsked = last ? /^not asked/i.test(last.asked) : false
 
     const LABEL = 12
     const row = (key: string, head: RenderElement, body: RenderElement) => (
@@ -306,18 +257,6 @@ export const register: Register = on => {
         {header}
         {row('want', <Text bold>Want</Text>, <Text wrap="wrap">{current.want}</Text>)}
         {row('knows', <Text bold>Knows</Text>, <Text wrap="wrap">{current.inHisHead}</Text>)}
-        {last
-          ? row(
-              'check',
-              <Text color={notAsked ? 'warning' : 'subtle'}>{notAsked ? 'NOT ASKED' : 'Write check'}</Text>,
-              <Text wrap="wrap">
-                <Text dimColor>you asked </Text>
-                <Text>{last.asked}</Text>
-                <Text dimColor>{` · touching ${fewTargets(last.targets)} · will say: `}</Text>
-                <Text>{last.sentence}</Text>
-              </Text>,
-            )
-          : null}
         {open ? <Text dimColor>History, newest first</Text> : null}
         {open
           ? past
