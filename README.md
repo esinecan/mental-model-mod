@@ -27,7 +27,7 @@ The mod adds a line for the model at three moments. Each one asks Claude to writ
 | | Attached to | Fires when | Starts with |
 |---|---|---|---|
 | Reminder | your message | no note exists | nothing on your first message, `IMPORTANT: ` from your second message on |
-| Remind reminder | your message | you pressed ↻ Remind, until Claude rewrites the note | nothing |
+| Update reminder | your message | you pressed U (Update on next prompt), until Claude rewrites the note | nothing |
 | Nudge | the result of Claude's first write after your message | Claude writes something before it rewrites the note | `THIS IS VERY IMPORTANT: ` when no note exists, nothing when a note exists |
 
 Both reminders carry the same text:
@@ -43,19 +43,19 @@ The nudge tells Claude its note is older than your last message, or that it has 
 The band is the panel above the prompt.
 
 ```
-Claude's model of you  v3 · changed: intent · 2 min ago   Wrong? Tell Claude.  −  ≡  ↻  ×  ∅
+−  Claude's model of you  v3 · changed: intent · 2 min ago                    ≡  U  ×  ∅
 Want        merge the branch and prepare the repo for release
 ────────────────────────────────────────────────────────────
 Knows       knows the tests pass, has not picked a license yet
 ```
 
-The header row shows the title, the note's version, which field changed last and how long ago. A thin line separates the Want row from the Knows row. The buttons sit on the right, and each shows its name under the pointer:
+The header row shows the title, the note's version, which field changed last and how long ago. A thin line separates the Want row from the Knows row. The − Hide button sits at the top left. The other buttons sit on the right. Each button shows its name under the pointer:
 
 | Button | Key | Does |
 |---|---|---|
 | − Hide | h | folds the band into one line with a + Show button (m) |
 | ≡ History | s | opens the older versions under the note, newest first |
-| ↻ Remind | r | turns on the Remind reminder, and shows ✓ until Claude rewrites the note |
+| U Update on next prompt | u | turns on the Update reminder, and shows ✓ until Claude rewrites the note |
 | × Remove | d | deletes the current note and moves it into the history, so Claude starts a new one |
 | ∅ Remove all | a | deletes the note and the whole history |
 

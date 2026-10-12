@@ -30,7 +30,7 @@ const lastChange = derive([note, history], (current, past) => {
 })
 
 // The reminder, in the user's own phrasing. It rides beside the user's prompt
-// while no note exists, and after Remind until the note is rewritten.
+// while no note exists, and after "Update on next prompt" until the note is rewritten.
 export const REMINDER =
   `Write down/update your understanding of user's intent, knowledge and gaps using the \`${NOTE_TOOL}\` tool. ` +
   "This will help you tailor your effort to user's needs, and help the user to catch drift early on."
@@ -167,7 +167,7 @@ export const register: Register = on => {
   // A message from the user is a new request: the note is stale until
   // rewritten, and the nudge may fire once more. The reminder rides beside the
   // prompt while no note exists, with IMPORTANT from the second message on,
-  // and after Remind until the note is rewritten.
+  // and after "Update on next prompt" until the note is rewritten.
   on('prompt.submit', async ($, e, next) => {
     const fromUser = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     if (!fromUser) return next(e)
@@ -229,7 +229,7 @@ export const register: Register = on => {
 
     // A small glyph button: the word appears under the pointer.
     const glyph = (key: string, hotkey: string, icon: string, word: string, onPress: () => void, primary = false) => (
-      <Box key={`${key}-hover`} marginLeft={1}>
+      <Box key={`${key}-hover`} marginLeft={key === 'hide' ? 0 : 1} marginRight={key === 'hide' ? 2 : 0}>
         <Button key={key} label={icon} hotkey={hotkey} plain variant={primary ? 'primary' : undefined} onPress={onPress} />
         <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
           <Text backgroundColor="subtle" color="inverseText">{` ${word} `}</Text>
@@ -253,16 +253,15 @@ export const register: Register = on => {
     const header = (
       <Box justifyContent="space-between">
         <Box>
+          {glyph('hide', 'h', '−', 'Hide', () => update($, isHidden, () => true))}
           <Text bold>Claude's model of you</Text>
           {current ? <Text dimColor>{`  ${stamp} · ${ago(now, current.at)}`}</Text> : null}
         </Box>
         <Box>
-          <Text dimColor>Wrong? Tell Claude.</Text>
-          {glyph('hide', 'h', '−', 'Hide', () => update($, isHidden, () => true))}
           {past.length
             ? glyph('history', 's', '≡', open ? 'Hide history' : `History (${past.length})`, () => update($, showHistory, v => !v), open)
             : null}
-          {glyph('remind', 'r', reminded ? '✓' : '↻', reminded ? 'Reminded' : 'Remind', () => update($, remind, () => true), reminded)}
+          {glyph('remind', 'u', reminded ? '✓' : 'U', reminded ? 'Updates on next prompt' : 'Update on next prompt', () => update($, remind, () => true), reminded)}
           {current ? glyph('remove', 'd', '×', 'Remove', removeNote) : null}
           {current || past.length ? glyph('removeAll', 'a', '∅', 'Remove all, history too', removeAll) : null}
         </Box>

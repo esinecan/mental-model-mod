@@ -134,7 +134,7 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the
   expect((await ui.find({ key: 'remind' }))?.props.label).toBe('✓')
   await $.tool.call({ ...NOTE, want: 'send three messages' })
   await ui.redraw()
-  expect((await ui.find({ key: 'remind' }))?.props.label).toBe('↻')
+  expect((await ui.find({ key: 'remind' }))?.props.label).toBe('U')
   expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
   await ui.press({ key: 'remove' })
   await ui.redraw()

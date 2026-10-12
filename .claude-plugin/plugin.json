@@ -1,6 +1,6 @@
 {
   "name": "mental-model",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": { "name": "esinecan" },
   "description": "The agent's working model of the user, shown above the prompt, and a nudge to rewrite it before a string of writes.",
   "types": "./types/index.d.ts"
