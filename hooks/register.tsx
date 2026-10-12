@@ -67,13 +67,17 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'note',
       description:
-        'Your working model of the user for this conversation. Rewrite it when your understanding changes, not on every message, and before a string of writes when it has. ' +
-        "want: the outcome the user wants, in the user's own words. " +
-        'in_their_head: what the user knows and believes about the state, and what the user is missing. ' +
-        'The result says what changed since the previous note.',
+        'Your working model of the user, shown to the user above the prompt. ' +
+        'Rewrite it when your understanding of the user changes, before you act on the new understanding.',
       inputSchema: {
         type: 'object',
-        properties: { want: { type: 'string' }, in_their_head: { type: 'string' } },
+        properties: {
+          want: { type: 'string', description: "The outcome the user wants, in the user's own words." },
+          in_their_head: {
+            type: 'string',
+            description: 'What the user knows and believes about the current state, and what the user is missing.',
+          },
+        },
         required: ['want', 'in_their_head'],
       },
     })

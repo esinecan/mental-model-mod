@@ -1,15 +1,67 @@
 # mental-model
 
-A Claude Code mod: the agent's working model of the user, in the user's words, shown above the prompt, and a nudge to rewrite it before a string of writes.
+A Claude Code mod that makes Claude write down what it thinks you want, and shows that note above your prompt.
 
-- `mcp__mental-model__note(want, in_their_head)`: the user's intent, and what the user knows and is missing. Rewritten when the agent's understanding changes. The result says what changed since the previous note. Twelve versions are kept.
-- The nudge: the first write of a turn whose note predates the user's last message carries a line for the model: rewrite the note if the understanding changed. The write runs. One nudge per turn; a note call in the turn clears it. Subagents are exempt.
-- The band: a header row with the title, the version, which field changed last, the age, and three glyph buttons: − Hide (h), ≡ History (s), ↻ Remind (r); the word appears under the pointer. Below it, labeled rows: Want and Knows. History opens under the rows, newest first, so the buttons stay at the top. Hide collapses the band to one line with + Show (m). Remind shows ✓ until the note is rewritten.
-- The reminder rides beside the user's prompt while no note exists, and after Remind until the note is rewritten.
-- The system prompt carries the note and its last change.
+When an agent misreads a request, you usually find out after it has done the work. This mod moves that moment to the start. Claude keeps a short note with two fields: what you want, in your own words, and what you know and what you are missing. The note sits above the prompt box, so a wrong reading is on screen before the first file changes. You correct it the ordinary way, by telling Claude.
 
-Files: `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/register.tsx`, `hooks/register.test.ts`, `types/index.d.ts`, `tsconfig.json`.
+Nothing in the mod blocks a tool call.
 
-Load: `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, or `claude --plugin-dir <folder>`.
+## The note
 
-Check: `claude plugin validate .` and `claude plugin test .`
+Claude writes the note with one tool:
+
+```
+mcp__mental-model__note(want, in_their_head)
+```
+
+Claude rewrites it when its understanding changes, not on every message. The tool result tells Claude which field changed and what it said before, so the model sees its own drift. The last twelve versions are kept.
+
+The note and its last change also go into Claude's system prompt for the rest of the session.
+
+## The nudge
+
+After you send a message, the first write Claude makes carries one extra line for the model: if what you want or know has changed, rewrite the note. The write still runs. A write here is any tool call that Claude Code did not find read-only by the tool's own check, so reading files and searching never trigger it.
+
+There is one nudge per message, and a note written before the first write means no nudge at all. Subagents never see it.
+
+## The band
+
+The band is the panel above the prompt.
+
+```
+Claude's model of you  v3 · changed: intent · 2 min ago     Wrong? Tell Claude.  −  ≡  ↻
+Want        merge the branch and prepare the repo for release
+Knows       knows the tests pass, has not picked a license yet
+```
+
+The header row shows the title, the note's version, which field changed last and how long ago. Three buttons sit on the right, and each shows its name under the pointer:
+
+| Button | Key | Does |
+|---|---|---|
+| − Hide | h | folds the band into one line with a + Show button (m) |
+| ≡ History | s | opens the older versions under the note, newest first |
+| ↻ Remind | r | adds a reminder to your next message, and shows ✓ until Claude rewrites the note |
+
+While no note exists, every prompt you send carries the same reminder.
+
+## Install
+
+Type this at the prompt of a Claude Code terminal session:
+
+```
+/plugin install mental-model --marketplace esinecan/mental-model-mod
+```
+
+Answer `y` to add the marketplace, then pick a scope. The user scope loads the mod in every session you start after, including sessions the desktop app runs on the same machine.
+
+To run a local checkout instead, start Claude Code with `claude --plugin-dir <folder>`, or add the folder to `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`. A running session keeps the version it loaded, and a change takes effect in the next session.
+
+## Develop
+
+`claude plugin validate .` checks the manifest. `claude plugin test .` runs `hooks/register.test.ts`, which mounts the band on the terminal and desktop surfaces and presses its buttons.
+
+The code is one hooks module, `hooks/register.tsx`, with its state types in `types/index.d.ts`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

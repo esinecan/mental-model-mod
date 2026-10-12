@@ -1,0 +1,13 @@
+{
+  "name": "mental-model-mod",
+  "description": "Claude's working model of you, kept as a note above the prompt.",
+  "owner": {
+    "name": "esinecan"
+  },
+  "plugins": [
+    {
+      "name": "mental-model",
+      "source": "./"
+    }
+  ]
+}
