@@ -2,13 +2,13 @@
 
 export type Note = {
   want: string
-  inHisHead: string
+  inTheirHead: string
   version: number
   at: number
 }
 
 export type Change = {
-  field: 'want' | 'inHisHead'
+  field: 'want' | 'inTheirHead'
   was: string
   now: string
 }
@@ -18,8 +18,7 @@ declare module 'claude-code' {
     'mental-model': {
       note: Note | null
       history: Note[]
-      noteFresh: boolean
-      nudged: boolean
+      settled: boolean
       isHidden: boolean
       showHistory: boolean
       remind: boolean
