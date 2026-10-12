@@ -1,5 +1,5 @@
 import { atom, derive, read, update } from 'claude-code'
-import type { Register, RenderElement } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Change, Note } from '../types'
 
@@ -12,6 +12,7 @@ import type { Change, Note } from '../types'
 const PLUGIN = 'mental-model'
 const NOTE_TOOL = `mcp__${PLUGIN}__note`
 const HISTORY_CAP = 12
+const SESSION_CAP = 50
 
 const note = atom({ plugin: 'mental-model', key: 'note' } as const, null)
 const history = atom({ plugin: 'mental-model', key: 'history' } as const, [])
@@ -19,6 +20,8 @@ const settled = atom({ plugin: 'mental-model', key: 'settled' } as const, false)
 const isHidden = atom({ plugin: 'mental-model', key: 'isHidden' } as const, false)
 const showHistory = atom({ plugin: 'mental-model', key: 'showHistory' } as const, false)
 const remind = atom({ plugin: 'mental-model', key: 'remind' } as const, false)
+const prompts = atom({ plugin: 'mental-model', key: 'prompts' } as const, 0)
+const loadedFor = atom({ plugin: 'mental-model', key: 'loadedFor' } as const, null)
 
 // The note's last change, shared by the system prompt and the band.
 const lastChange = derive([note, history], (current, past) => {
@@ -32,11 +35,54 @@ export const REMINDER =
   `Write down/update your understanding of user's intent, knowledge and gaps using the \`${NOTE_TOOL}\` tool. ` +
   "This will help you tailor your effort to user's needs, and help the user to catch drift early on."
 
-// Rides on the first write of a turn whose note predates the user's last
-// message. A recommendation: the write has already run.
+// From the second user message on, the reminder for a missing note starts with this.
+export const IMPORTANT = 'IMPORTANT: '
+
+// Rides on the first write after a user message, when the note was not
+// rewritten first. A recommendation: the write has already run.
 export const NUDGE =
   `${PLUGIN}: your note of the user predates the user's last message. ` +
   `If what the user wants, knows or is missing has changed, rewrite it with ${NOTE_TOOL} before continuing this string of writes.`
+
+// The nudge when no note exists at all.
+export const NUDGE_EMPTY =
+  `THIS IS VERY IMPORTANT: ${PLUGIN}: you have not written a note of the user yet. ` +
+  `Write it with ${NOTE_TOOL} before continuing this string of writes.`
+
+// The note and its history on disk, one entry per session id, the most
+// recent SESSION_CAP sessions kept. A restart or a resume of the same
+// session loads them back; a new session id starts empty.
+const entryKey = (id: string) => `session/${id}`
+
+async function save($: EngineInterface) {
+  const id = await $.session.id()
+  const [current, past] = await Promise.all([read($, note), read($, history)])
+  await $.store.set(entryKey(id), { note: current, history: past })
+  const order = ((await $.store.get('order')) as string[] | undefined) ?? []
+  const kept = [...order.filter(k => k !== id), id]
+  for (const old of kept.slice(0, Math.max(0, kept.length - SESSION_CAP))) await $.store.delete(entryKey(old))
+  await $.store.set('order', kept.slice(-SESSION_CAP))
+}
+
+// Loads the session's saved note once per session id: at start, and at the
+// first prompt after a /clear or a resume changed the id.
+async function load($: EngineInterface) {
+  const id = await $.session.id()
+  if ((await read($, loadedFor)) === id) return
+  const saved = (await $.store.get(entryKey(id))) as { note: Note | null; history: Note[] } | undefined
+  await Promise.all([
+    update($, loadedFor, () => id),
+    update($, note, () => saved?.note ?? null),
+    update($, history, () => saved?.history ?? []),
+    update($, prompts, () => 0),
+    update($, settled, () => false),
+    update($, remind, () => false),
+  ])
+  await $.ui.invalidate('prompt.section')
+}
+
+const nextVersion = (current: Note | null, past: Note[]) =>
+  Math.max(current?.version ?? 0, ...past.map(n => n.version)) + 1
 
 export function diffNotes(previous: Note | null, next: Pick<Note, 'want' | 'inTheirHead'>): Change[] {
   if (!previous) return []
@@ -64,6 +110,7 @@ function ago(now: number, at: number): string {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
+    await load($)
     await $.tool.register({
       name: 'note',
       description:
@@ -89,42 +136,47 @@ export const register: Register = on => {
     const want = String(args.want ?? '').trim()
     const inTheirHead = String(args.in_their_head ?? '').trim()
     if (!want || !inTheirHead) return { deny: `${NOTE_TOOL}: want and in_their_head are both required.` }
-    const previous = await read($, note)
+    const [previous, past] = await Promise.all([read($, note), read($, history)])
     const changes = diffNotes(previous, { want, inTheirHead })
     await Promise.all([update($, settled, () => true), update($, remind, () => false)])
     if (previous && !changes.length) {
       return { result: `Note unchanged (v${previous.version}).` }
     }
-    const entry: Note = { want, inTheirHead, version: (previous?.version ?? 0) + 1, at: await $.clock.now() }
+    const entry: Note = { want, inTheirHead, version: nextVersion(previous, past), at: await $.clock.now() }
     if (previous) await update($, history, list => [...list, previous].slice(-HISTORY_CAP))
     await update($, note, () => entry)
-    await $.ui.invalidate('prompt.section')
+    await Promise.all([save($), $.ui.invalidate('prompt.section')])
     const summary = previous ? `Changed since v${previous.version}: ${describeChanges(changes)}.` : 'First note of this session.'
     return { result: `Note v${entry.version} written. ${summary}` }
   })
 
-  // The nudge: the first write of a turn whose note predates the user's
-  // last message carries a recommendation to rewrite the note. The write runs.
-  // A write is a call that core did not find read-only by the tool's own check.
+  // The nudge: the first write after a user message, when the note was not
+  // rewritten first, carries a recommendation to rewrite it. The write runs.
+  // A write is a call that core did not find read-only by the tool's own check:
+  // creating, editing and deleting files all count.
   on('tool.call', async ($, e, next) => {
     const inMainLoop = (e as { agentId?: string }).agentId === undefined
     if (!inMainLoop || e.tool === NOTE_TOOL || (await read($, settled))) return next(e)
     const answer = await next(e)
     if (answer.deny !== undefined || answer.isError || answer.isReadOnly) return answer
     await update($, settled, () => true)
-    return { ...answer, context: [...(answer.context ?? []), NUDGE] }
+    const text = (await read($, note)) ? NUDGE : NUDGE_EMPTY
+    return { ...answer, context: [...(answer.context ?? []), text] }
   })
 
   // A message from the user is a new request: the note is stale until
   // rewritten, and the nudge may fire once more. The reminder rides beside the
-  // prompt while no note exists, and after Remind until the note is rewritten.
+  // prompt while no note exists, with IMPORTANT from the second message on,
+  // and after Remind until the note is rewritten.
   on('prompt.submit', async ($, e, next) => {
     const fromUser = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     if (!fromUser) return next(e)
-    await update($, settled, () => false)
-    const missing = (await read($, note)) === null
-    if (!missing && !(await read($, remind))) return next(e)
-    return next({ ...e, context: [...(e.context ?? []), REMINDER] })
+    await load($)
+    await Promise.all([update($, settled, () => false), update($, prompts, n => n + 1)])
+    const [current, reminded, count] = await Promise.all([read($, note), read($, remind), read($, prompts)])
+    if (current && !reminded) return next(e)
+    const text = !current && count >= 2 ? IMPORTANT + REMINDER : REMINDER
+    return next({ ...e, context: [...(e.context ?? []), text] })
   })
 
   // The note in the system prompt, with its last change, so the model sees
@@ -185,6 +237,19 @@ export const register: Register = on => {
       </Box>
     )
 
+    // Remove moves the current note into the history; Remove all clears both.
+    const removeNote = async () => {
+      const current = await read($, note)
+      if (!current) return
+      await update($, history, list => [...list, current].slice(-HISTORY_CAP))
+      await update($, note, () => null)
+      await Promise.all([save($), $.ui.invalidate('prompt.section')])
+    }
+    const removeAll = async () => {
+      await Promise.all([update($, note, () => null), update($, history, () => []), update($, showHistory, () => false)])
+      await Promise.all([save($), $.ui.invalidate('prompt.section')])
+    }
+
     const header = (
       <Box justifyContent="space-between">
         <Box>
@@ -198,6 +263,8 @@ export const register: Register = on => {
             ? glyph('history', 's', '≡', open ? 'Hide history' : `History (${past.length})`, () => update($, showHistory, v => !v), open)
             : null}
           {glyph('remind', 'r', reminded ? '✓' : '↻', reminded ? 'Reminded' : 'Remind', () => update($, remind, () => true), reminded)}
+          {current ? glyph('remove', 'd', '×', 'Remove', removeNote) : null}
+          {current || past.length ? glyph('removeAll', 'a', '∅', 'Remove all, history too', removeAll) : null}
         </Box>
       </Box>
     )
@@ -215,6 +282,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {header}
         {row('want', <Text bold>Want</Text>, <Text wrap="wrap">{current.want}</Text>)}
+        <Text key="separator" dimColor wrap="truncate">{'─'.repeat(Math.max(8, e.props.bodyColumns ?? 40))}</Text>
         {row('knows', <Text bold>Knows</Text>, <Text wrap="wrap">{current.inTheirHead}</Text>)}
         {open ? <Text dimColor>History, newest first</Text> : null}
         {open

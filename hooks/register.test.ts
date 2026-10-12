@@ -1,18 +1,30 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { NUDGE, describeChanges, diffNotes } from './register'
+import { IMPORTANT, NUDGE, NUDGE_EMPTY, REMINDER, describeChanges, diffNotes } from './register'
 
-// The test's hooks stand for the engine beneath the mod: a clock and tool
-// registration. The kit answers $.state and a render's $.ui.invalidate.
-function standIn(on: On) {
+// The test's hooks stand for the engine beneath the mod: a clock, a store on
+// disk, the session id, redraws, prompts and tool registration. The kit
+// answers $.state. Each prompt's context lands in `sent`.
+function standIn(on: On, saved: Record<string, unknown> = {}) {
+  const sent: (readonly string[])[] = []
   mock.clock(on, { now: 1_000_000 })
+  mock.store(on, saved)
+  on('session.id', () => ({ value: 's1' }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('prompt.submit', ($, e) => {
+    sent.push(e.context ?? [])
+    return { text: e.text }
+  })
   on('ui.render', ($, e) => {
     const { Box } = $.ui.resolve(e as never)
     return h(Box, {})
   })
   on('tool.register', ($, e) => ({ value: { tool: `mcp__mental-model__${e.name}` } }))
+  return sent
 }
+
+const ask = (text: string) => ({ text, wait: false, origin: { kind: 'composer' as const } })
 
 const WRITE_RESULT = { result: { type: 'create', filePath: 'C:/x/plan.md', content: 'y' } }
 const NOTE = { tool: 'mcp__mental-model__note', want: 'send one message', in_their_head: 'the user knows the text' }
@@ -32,10 +44,10 @@ test('a write runs without a note and carries one nudge per turn', async ($, on)
   const first = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
   expect(first.deny).toBe(undefined)
   expect(first.isError).toBe(undefined)
-  expect((first.context ?? []).includes(NUDGE)).toBe(true)
+  expect((first.context ?? []).includes(NUDGE_EMPTY)).toBe(true)
   const second = await $.tool.call({ tool: 'Write', file_path: 'C:/x/other.md', content: 'y' })
   expect(second.deny).toBe(undefined)
-  expect((second.context ?? []).includes(NUDGE)).toBe(false)
+  expect((second.context ?? []).includes(NUDGE_EMPTY)).toBe(false)
 })
 
 test('a read-only call carries no nudge and leaves it for the first write', async ($, on) => {
@@ -45,7 +57,7 @@ test('a read-only call carries no nudge and leaves it for the first write', asyn
   const read = await $.tool.call({ tool: 'Read', file_path: 'C:/x/plan.md' })
   expect((read.context ?? []).includes(NUDGE)).toBe(false)
   const write = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
-  expect((write.context ?? []).includes(NUDGE)).toBe(true)
+  expect((write.context ?? []).includes(NUDGE_EMPTY)).toBe(true)
 })
 
 test('a write after a note in the same turn carries no nudge', async ($, on) => {
@@ -55,6 +67,35 @@ test('a write after a note in the same turn carries no nudge', async ($, on) => 
   const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
   expect(run.deny).toBe(undefined)
   expect((run.context ?? []).includes(NUDGE)).toBe(false)
+})
+
+test('a write after a new user message, with a note, carries the plain nudge', async ($, on) => {
+  standIn(on)
+  on('tool.call', { tool: 'Write' }, () => WRITE_RESULT)
+  await $.tool.call(NOTE)
+  await $.prompt.submit(ask('next request'))
+  const run = await $.tool.call({ tool: 'Write', file_path: 'C:/x/plan.md', content: 'y' })
+  expect((run.context ?? []).includes(NUDGE)).toBe(true)
+})
+
+test('the reminder for a missing note gains IMPORTANT from the second message on', async ($, on) => {
+  const sent = standIn(on)
+  await $.prompt.submit(ask('one'))
+  await $.prompt.submit(ask('two'))
+  expect(sent[0]).toEqual([REMINDER])
+  expect(sent[1]).toEqual([IMPORTANT + REMINDER])
+  await $.tool.call(NOTE)
+  await $.prompt.submit(ask('three'))
+  expect(sent[2]).toEqual([])
+})
+
+test('the note and its history are saved per session and loaded back', async ($, on) => {
+  const saved = { 'session/s1': { note: { want: 'kept want', inTheirHead: 'kept knows', version: 4, at: 0 }, history: [] }, order: ['s1'] }
+  const sent = standIn(on, saved)
+  await $.prompt.submit(ask('after a restart'))
+  expect(sent[0]).toEqual([])
+  const written = await $.tool.call({ ...NOTE, want: 'new want' })
+  expect(textOf(written)).toContain('Note v5 written')
 })
 
 test('the note needs both fields and reports its own changes', async ($, on) => {
@@ -94,6 +135,18 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the
   await $.tool.call({ ...NOTE, want: 'send three messages' })
   await ui.redraw()
   expect((await ui.find({ key: 'remind' }))?.props.label).toBe('↻')
+  expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
+  await ui.press({ key: 'remove' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /send three messages/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: /not written down what you want yet/ })).toBeDefined()
+  expect(await ui.find({ key: 'history' })).toBeDefined()
+  await ui.press({ key: 'removeAll' })
+  await ui.redraw()
+  expect(await ui.find({ key: 'history' })).toBe(undefined)
+  expect(await ui.find({ key: 'removeAll' })).toBe(undefined)
+  await $.tool.call({ ...NOTE, want: 'send three messages' })
+  await ui.redraw()
   await ui.press({ key: 'hide' })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBe(undefined)

@@ -22,6 +22,8 @@ declare module 'claude-code' {
       isHidden: boolean
       showHistory: boolean
       remind: boolean
+      prompts: number
+      loadedFor: string | null
     }
   }
 }
