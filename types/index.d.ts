@@ -5,6 +5,8 @@ export type Note = {
   inTheirHead: string
   version: number
   at: number
+  // Set on a history entry the user removed with Remove.
+  isRemoved?: boolean
 }
 
 export type Change = {
@@ -12,6 +14,12 @@ export type Change = {
   was: string
   now: string
 }
+
+// How the current note relates to the entry before it in the history.
+export type Origin =
+  | { kind: 'first' }
+  | { kind: 'changed'; previous: Note; changes: Change[] }
+  | { kind: 'replaces'; removed: Note }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -22,6 +30,7 @@ declare module 'claude-code' {
       isHidden: boolean
       showHistory: boolean
       remind: boolean
+      isRemoveAllArmed: boolean
       prompts: number
       loadedFor: string | null
     }

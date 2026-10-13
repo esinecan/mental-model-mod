@@ -16,16 +16,19 @@ mcp__mental-model__note(want, in_their_head)
 
 Claude rewrites it when its understanding changes, not on every message. The tool result tells Claude which field changed and what it said before, so the model sees its own drift. The last twelve versions are kept as history.
 
-The note and its last change also go into Claude's system prompt for the rest of the session.
+The note and its last change also ride beside each of your messages, so Claude reads them where it reads your request. They never go into the system prompt. A system prompt that changes in the middle of a session misses the prompt cache for the whole conversation after it, and the note changes often.
+
+When you press × Remove, the removed note stays in the history, marked as removed. Claude's next note is told that it replaces the removed one, and what the removed one said. The tool result, the band and the line beside your message all say the same thing.
 
 The note and its history are saved on disk under the session's id. When you restart Claude Code or resume the session, the note comes back. A new session, or a `/clear`, starts with no note. The mod keeps the 50 most recent sessions.
 
 ## What Claude is told, and when
 
-The mod adds a line for the model at three moments. Each one asks Claude to write or update the note. None of them blocks anything, and subagents never get them.
+The mod adds a line for the model at four moments. The note line shows Claude its current note. The other three ask Claude to write or update the note. None of them blocks anything, and subagents never get them.
 
 | | Attached to | Fires when | Starts with |
 |---|---|---|---|
+| Note | your message | a note exists | `Your working model of the user (mental-model, note vN):`, then the note and its last change |
 | Reminder | your message | no note exists | nothing on your first message, `IMPORTANT: ` from your second message on |
 | Update reminder | your message | you pressed U (Update on next prompt), until Claude rewrites the note | nothing |
 | Nudge | the result of Claude's first write after your message | Claude writes something before it rewrites the note | `THIS IS VERY IMPORTANT: ` when no note exists, nothing when a note exists |
@@ -49,7 +52,7 @@ Want        merge the branch and prepare the repo for release
 Knows       knows the tests pass, has not picked a license yet
 ```
 
-The header row shows the title, the note's version, which field changed last and how long ago. A thin line separates the Want row from the Knows row. The − Hide button sits at the top left. The other buttons sit on the right. Each button shows its name under the pointer:
+The header row shows the title, the note's version, which field changed last and how long ago. After a Remove, it says which removed version the note replaces. A thin line separates the Want row from the Knows row. The − Hide button sits at the top left. The other buttons sit on the right. Each button shows its name under the pointer:
 
 | Button | Key | Does |
 |---|---|---|
@@ -57,7 +60,9 @@ The header row shows the title, the note's version, which field changed last and
 | ≡ History | s | opens the older versions under the note, newest first |
 | U Update on next prompt | u | turns on the Update reminder, and shows ✓ until Claude rewrites the note |
 | × Remove | d | deletes the current note and moves it into the history, so Claude starts a new one |
-| ∅ Remove all | a | deletes the note and the whole history |
+| ∅ Remove all | a | asks first: a row under the header names what goes, with Remove all (y) and Keep (n). Remove all deletes the note and the whole history, with no undo |
+
+The keys work while the band holds the keyboard: after ctrl+x tab, or after a click on the band. Typing in the prompt never presses them. An armed Remove all disarms when you press Keep, ∅ again or any other band button, when you send a message, or when Claude writes a new note.
 
 ## Install
 
@@ -73,7 +78,18 @@ To run a local checkout instead, start Claude Code with `claude --plugin-dir <fo
 
 ## Develop
 
-`claude plugin validate .` checks the manifest. `claude plugin test .` runs `hooks/register.test.ts`, which mounts the band on the terminal and desktop surfaces and presses its buttons.
+`claude plugin validate .` checks the manifest and lists the hooks. `claude plugin test .` runs `hooks/register.test.ts`. The tests cover:
+
+- the nudge: one per turn, only on a write, never after a fresh note
+- the reminder and its `IMPORTANT: ` prefix, and Update on next prompt
+- the note beside each message, and a system prompt that a note never changes
+- the note's origin after a rewrite, a Remove and a Remove all, the same in the tool result, the band and the line beside the message
+- saving and loading per session, removed marks included
+- the band on the terminal and desktop surfaces: each button, the Remove all confirmation, and each way it disarms
+
+`claude plugin test` is in Claude Code 2.1.295. Claude Code 2.1.258 does not have it. Run `claude --version` to see which one you have.
+
+`tsc -p .` type-checks the mod and the tests. Its `tsconfig.json` extends `.claude-plugin/types/tsconfig.json`, which Claude Code writes when it loads the mod from this folder.
 
 The code is one hooks module, `hooks/register.tsx`, with its state types in `types/index.d.ts`.
 
