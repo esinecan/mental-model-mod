@@ -3,12 +3,6 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Change, Note, Origin } from '../types'
 
-// mental-model: the agent's working model of the user, in the user's words,
-// shown above the prompt, plus one nudge per turn to rewrite it before a
-// string of writes. Nothing blocks a write. The note's evolution is visible
-// to the agent in the tool result and beside each user message, and to the
-// user in the band.
-
 const PLUGIN = 'mental-model'
 const NOTE_TOOL = `mcp__${PLUGIN}__note`
 const HISTORY_CAP = 12
@@ -24,33 +18,22 @@ const isRemoveAllArmed = atom({ plugin: 'mental-model', key: 'isRemoveAllArmed' 
 const prompts = atom({ plugin: 'mental-model', key: 'prompts' } as const, 0)
 const loadedFor = atom({ plugin: 'mental-model', key: 'loadedFor' } as const, null)
 
-// The current note's origin, shared by the tool result, the band and the
-// context beside each user message.
 const origin = derive([note, history], (current, past) => (current ? originOf(past, current) : null))
 
-// The reminder, in the user's own phrasing. It rides beside the user's prompt
-// while no note exists, and after "Update on next prompt" until the note is rewritten.
 export const REMINDER =
   `Write down/update your understanding of user's intent, knowledge and gaps using the \`${NOTE_TOOL}\` tool. ` +
   "This will help you tailor your effort to user's needs, and help the user to catch drift early on."
 
-// From the second user message on, the reminder for a missing note starts with this.
 export const IMPORTANT = 'IMPORTANT: '
 
-// Rides on the first write after a user message, when the note was not
-// rewritten first. A recommendation: the write has already run.
 export const NUDGE =
   `${PLUGIN}: your note of the user predates the user's last message. ` +
   `If what the user wants, knows or is missing has changed, rewrite it with ${NOTE_TOOL} before continuing this string of writes.`
 
-// The nudge when no note exists at all.
 export const NUDGE_EMPTY =
   `THIS IS VERY IMPORTANT: ${PLUGIN}: you have not written a note of the user yet. ` +
   `Write it with ${NOTE_TOOL} before continuing this string of writes.`
 
-// The note and its history on disk, one entry per session id, the most
-// recent SESSION_CAP sessions kept. A restart or a resume of the same
-// session loads them back; a new session id starts empty.
 const entryKey = (id: string) => `session/${id}`
 
 async function save($: EngineInterface) {
@@ -63,8 +46,6 @@ async function save($: EngineInterface) {
   await $.store.set('order', kept.slice(-SESSION_CAP))
 }
 
-// Loads the session's saved note once per session id: at start, and at the
-// first prompt after a /clear or a resume changed the id.
 async function load($: EngineInterface) {
   const id = await $.session.id()
   if ((await read($, loadedFor)) === id) return
@@ -98,27 +79,19 @@ export function describeChanges(changes: Change[]): string {
   return changes.map(c => `${label(c.field)}: was «${c.was}» now «${c.now}»`).join('; ')
 }
 
-// The newest history entry is the version the current note followed: the
-// note it rewrote, or the note the user removed before it was written.
 export function originOf(past: Note[], current: Note | null = null): Origin {
   const previous = past[past.length - 1]
   if (!previous) return { kind: 'first' }
-  if (previous.isRemoved) return { kind: 'replaces', removed: previous }
   return { kind: 'changed', previous, changes: current ? diffNotes(previous, current) : [] }
 }
 
-// What the model reads about the origin, in the tool result and beside each
-// user message. A note after a Remove reads as a first note: the model never
-// sees the removed note again, nor that the user removed it.
 function originForModel(o: Origin): string {
   if (o.kind === 'changed') return `Changed since v${o.previous.version}: ${describeChanges(o.changes)}.`
   return 'First note.'
 }
 
-// What the band's header says about the origin.
 function originForBand(o: Origin): string {
   if (o.kind === 'changed') return ` · changed: ${o.changes.map(c => label(c.field)).join(', ')}`
-  if (o.kind === 'replaces') return ` · replaces removed v${o.removed.version}`
   return ''
 }
 
@@ -187,10 +160,6 @@ export const register: Register = on => {
     return { result: `Note v${entry.version} written. ${originForModel(originOf(await read($, history), entry))}` }
   })
 
-  // The nudge: the first write after a user message, when the note was not
-  // rewritten first, carries a recommendation to rewrite it. The write runs.
-  // A write is a call that core did not find read-only by the tool's own check:
-  // creating, editing and deleting files all count.
   on('tool.call', async ($, e, next) => {
     const inMainLoop = (e as { agentId?: string }).agentId === undefined
     if (!inMainLoop || e.tool === NOTE_TOOL || (await read($, settled))) return next(e)
@@ -201,14 +170,6 @@ export const register: Register = on => {
     return { ...answer, context: [...(answer.context ?? []), text] }
   })
 
-  // A message from the user is a new request: the note is stale until
-  // rewritten, the nudge may fire once more, and an armed Remove all is
-  // disarmed. The current note and its origin ride beside the prompt, so the
-  // model reads them where it reads the request. The system prompt never
-  // carries them: a system prompt that changes mid-session misses the prompt
-  // cache for the whole conversation after it. The reminder rides too while
-  // no note exists, with IMPORTANT from the second message on, and after
-  // "Update on next prompt" until the note is rewritten.
   on('prompt.submit', async ($, e, next) => {
     const fromUser = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     if (!fromUser) return next(e)
@@ -225,9 +186,6 @@ export const register: Register = on => {
     return next({ ...e, context: [...(e.context ?? []), ...lines] })
   })
 
-  // What the user sees above the prompt. The header row carries the title,
-  // the version and the buttons, so the buttons stay at the top when history
-  // opens below. Each row is a label column and a text column. Nothing is clipped.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -237,7 +195,6 @@ export const register: Register = on => {
     ])
     const stamp = current && o ? `v${current.version}${originForBand(o)}` : ''
 
-    // Any band button but Remove all disarms an armed Remove all.
     const disarm = () => update($, isRemoveAllArmed, () => false)
     const andDisarm = (act: () => unknown) => async () => {
       await disarm()
@@ -261,7 +218,6 @@ export const register: Register = on => {
       </Box>
     )
 
-    // A small glyph button: the word appears under the pointer.
     const glyph = (key: string, hotkey: string, icon: string, word: string, onPress: () => void, primary = false) => (
       <Box key={`${key}-hover`} marginLeft={key === 'hide' ? 0 : 1} marginRight={key === 'hide' ? 2 : 0}>
         <Button key={key} label={icon} hotkey={hotkey} plain variant={primary ? 'primary' : undefined} onPress={onPress} />
@@ -271,12 +227,7 @@ export const register: Register = on => {
       </Box>
     )
 
-    // Remove moves the current note into the history, marked as removed;
-    // Remove all clears both, after the user confirms it.
     const removeNote = async () => {
-      const current = await read($, note)
-      if (!current) return
-      await update($, history, list => [...list, { ...current, isRemoved: true }].slice(-HISTORY_CAP))
       await update($, note, () => null)
       await save($)
     }
@@ -347,7 +298,7 @@ export const register: Register = on => {
               .map(n =>
                 row(
                   `v${n.version}`,
-                  <Text dimColor>{`v${n.version}${n.isRemoved ? ' · removed' : ''} · ${ago(now, n.at)}`}</Text>,
+                  <Text dimColor>{`v${n.version} · ${ago(now, n.at)}`}</Text>,
                   <Text dimColor wrap="wrap">{`${n.want} — ${n.inTheirHead}`}</Text>,
                 ),
               )

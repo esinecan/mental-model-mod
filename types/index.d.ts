@@ -1,12 +1,9 @@
-// The mod's state contract. Each value lives in $.state under 'mental-model'.
 
 export type Note = {
   want: string
   inTheirHead: string
   version: number
   at: number
-  // Set on a history entry the user removed with Remove.
-  isRemoved?: boolean
 }
 
 export type Change = {
@@ -15,11 +12,9 @@ export type Change = {
   now: string
 }
 
-// How the current note relates to the entry before it in the history.
 export type Origin =
   | { kind: 'first' }
   | { kind: 'changed'; previous: Note; changes: Change[] }
-  | { kind: 'replaces'; removed: Note }
 
 declare module 'claude-code' {
   interface PluginState {

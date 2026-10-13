@@ -18,7 +18,7 @@ Claude rewrites it when its understanding changes, not on every message. The too
 
 The note and its last change also ride beside each of your messages, so Claude reads them where it reads your request. They never go into the system prompt. A system prompt that changes in the middle of a session misses the prompt cache for the whole conversation after it, and the note changes often.
 
-When you press × Remove, the removed note stays in the history, marked as removed, and the band says which removed version the next note replaces. Claude never sees the removed note again. Claude's next note is a first note to Claude: the tool result and the line beside your message say nothing about the removed one.
+× Remove deletes the current note. The versions before it stay, and Claude's next note follows the last one.
 
 The note and its history are saved on disk under the session's id. When you restart Claude Code or resume the session, the note comes back. A new session, or a `/clear`, starts with no note. The mod keeps the 50 most recent sessions.
 
@@ -52,15 +52,15 @@ Want        merge the branch and prepare the repo for release
 Knows       knows the tests pass, has not picked a license yet
 ```
 
-The header row shows the title, the note's version, which field changed last and how long ago. After a Remove, it says which removed version the note replaces. A thin line separates the Want row from the Knows row. The − Hide button sits at the top left. The other buttons sit on the right. Each button shows its name under the pointer:
+The header row shows the title, the note's version, which field changed last and how long ago. A thin line separates the Want row from the Knows row. The − Hide button sits at the top left. The other buttons sit on the right. Each button shows its name under the pointer:
 
 | Button | Key | Does |
 |---|---|---|
 | − Hide | h | folds the band into one line with a + Show button (m) |
 | ≡ History | s | opens the older versions under the note, newest first |
 | U Update on next prompt | u | turns on the Update reminder, and shows ✓ until Claude rewrites the note |
-| × Remove | d | deletes the current note and moves it into the history, so Claude starts a new one |
-| ∅ Remove all | a | asks first: a row under the header names what goes, with Remove all (y) and Keep (n). Remove all deletes the note and the whole history, with no undo |
+| × Remove | d | deletes the current note; the versions before it stay |
+| ∅ Remove all | a | asks first: a row under the header names what goes, with Remove all (y) and Keep (n). Remove all deletes the note and its history in this session, with no undo |
 
 The keys work while the band holds the keyboard: after ctrl+x tab, or after a click on the band. Typing in the prompt never presses them. An armed Remove all disarms when you press Keep, ∅ again or any other band button, when you send a message, or when Claude writes a new note.
 
@@ -83,8 +83,8 @@ To run a local checkout instead, start Claude Code with `claude --plugin-dir <fo
 - the nudge: one per turn, only on a write, never after a fresh note
 - the reminder and its `IMPORTANT: ` prefix, and Update on next prompt
 - the note beside each message, and a system prompt that a note never changes
-- the note's origin after a rewrite, a Remove and a Remove all: after a Remove, the band names the removed version and Claude reads a first note
-- saving and loading per session, removed marks included
+- the note after a rewrite, a Remove and a Remove all
+- saving and loading per session
 - the band on the terminal and desktop surfaces: each button, the Remove all confirmation, and each way it disarms
 
 `claude plugin test` is in Claude Code 2.1.295. Claude Code 2.1.258 does not have it. Run `claude --version` to see which one you have.

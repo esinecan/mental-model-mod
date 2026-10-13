@@ -3,9 +3,6 @@ import type { On, RenderElement } from 'claude-code'
 
 import { IMPORTANT, NUDGE, NUDGE_EMPTY, REMINDER, describeChanges, diffNotes } from './register'
 
-// The test's hooks stand for the engine beneath the mod: a clock, a store on
-// disk, the session id, redraws, prompts, system prompt sections and tool
-// registration. The kit answers $.state. Each prompt's context lands in `sent`.
 function standIn(on: On, saved: Record<string, unknown> = {}) {
   const sent: (readonly string[])[] = []
   mock.clock(on, { now: 1_000_000 })
@@ -26,8 +23,6 @@ function standIn(on: On, saved: Record<string, unknown> = {}) {
   return sent
 }
 
-// Starts the session as the engine does before the first prompt: the saved
-// note loads and the note tool registers.
 const start = ($: { session: { start: (e: { cwd: string; surface: 'terminal'; isInteractive: boolean }) => Promise<unknown> } }) =>
   $.session.start({ cwd: '/x', surface: 'terminal', isInteractive: true })
 
@@ -122,10 +117,6 @@ test('the note needs both fields and reports its own changes', async ($, on) => 
   expect(textOf(second)).toContain('Note v2 written')
   expect(textOf(second)).toContain('was «send one message» now «send two messages»')
 })
-
-// The note reaches the model on the user's message, never in the system
-// prompt: a system prompt that changes mid-session misses the prompt cache for
-// the whole conversation after it.
 
 test('writing or removing a note leaves the system prompt as it was', async ($, on) => {
   standIn(on)
@@ -222,50 +213,23 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the
   await ui.unmount()
 })
 
-// After Remove, the band tells the user that the new note replaces the one
-// they removed. The model reads the new note as a first note: it never sees
-// the removed note again, nor that the user removed it.
-
-for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a note after Remove is a first note to the model, and the band says it replaces the removed one`, async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, Remove deletes only the current note, and the next note follows the version before it`, async ($, on) => {
   const sent = standIn(on)
   await $.tool.call(NOTE)
+  await $.tool.call({ ...NOTE, want: 'send two messages' })
   const ui = await $.ui.mount({ plugin: 'mental-model', surface, ...BAND })
   await ui.press({ key: 'remove' })
-  const written = await $.tool.call({ ...NOTE, want: 'send two messages' })
+  const written = await $.tool.call({ ...NOTE, want: 'send three messages' })
   await ui.redraw()
   await $.prompt.submit(ask('go on'))
   expect(textOf(written)).toContain('Note v2 written')
-  expect(textOf(written)).toContain('First note')
-  expect(textOf(written)).not.toContain('send one message')
-  expect(textOf(written)).not.toContain('removed')
-  expect(await ui.find({ type: 'Text', text: /replaces removed v1/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /changed:/ })).toBe(undefined)
-  expect(joined(sent[0])).toContain('Intent: send two messages')
-  expect(joined(sent[0])).not.toContain('send one message')
-  expect(joined(sent[0])).not.toContain('removed')
-  expect(joined(sent[0])).not.toContain('Changed since')
+  expect(textOf(written)).toContain('Changed since v1: intent: was «send one message» now «send three messages»')
+  expect(textOf(written)).not.toContain('send two messages')
+  expect(joined(sent[0])).not.toContain('send two messages')
   await ui.press({ key: 'history' })
   await ui.redraw()
-  expect(await ui.find({ type: 'Text', text: /^v1 · removed · / })).toBeDefined()
-  const next = await $.tool.call({ ...NOTE, want: 'send three messages' })
-  await ui.redraw()
-  expect(textOf(next)).toContain('Changed since v2')
-  expect(textOf(next)).not.toContain('send one message')
-  expect(await ui.find({ type: 'Text', text: /changed: intent/ })).toBeDefined()
-  await ui.unmount()
-})
-
-test('a removed note is saved as removed and loads back that way', async ($, on) => {
-  const removed = { want: 'old want', inTheirHead: 'old knows', version: 3, at: 0, isRemoved: true }
-  const saved = { 'session/s1': { note: null, history: [removed] }, order: ['s1'] }
-  standIn(on, saved)
-  await start($)
-  const written = await $.tool.call({ ...NOTE })
-  expect(textOf(written)).toContain('Note v4 written')
-  expect(textOf(written)).toContain('First note')
-  expect(textOf(written)).not.toContain('old want')
-  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
-  expect(await ui.find({ type: 'Text', text: /replaces removed v3/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^v1 · / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /send two messages/ })).toBe(undefined)
   await ui.unmount()
 })
 
@@ -281,14 +245,10 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a n
   await $.prompt.submit(ask('go on'))
   expect(textOf(written)).toContain('Note v1 written')
   expect(textOf(written)).toContain('First note')
-  expect(await ui.find({ type: 'Text', text: /changed:|removed/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: /changed:/ })).toBe(undefined)
   expect(joined(sent[0])).not.toContain('Changed since')
-  expect(joined(sent[0])).not.toContain('removed')
   await ui.unmount()
 })
-
-// Remove all deletes the note and every older version, with no undo. One
-// press arms it; a second, separate button confirms it.
 
 for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, Remove all asks first, and Keep cancels it`, async ($, on) => {
   standIn(on)
