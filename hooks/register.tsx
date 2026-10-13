@@ -25,7 +25,7 @@ const prompts = atom({ plugin: 'mental-model', key: 'prompts' } as const, 0)
 const loadedFor = atom({ plugin: 'mental-model', key: 'loadedFor' } as const, null)
 
 // The current note's origin, shared by the tool result, the band and the
-// context beside each user message, so all three tell the same story.
+// context beside each user message.
 const origin = derive([note, history], (current, past) => (current ? originOf(past, current) : null))
 
 // The reminder, in the user's own phrasing. It rides beside the user's prompt
@@ -108,12 +108,11 @@ export function originOf(past: Note[], current: Note | null = null): Origin {
 }
 
 // What the model reads about the origin, in the tool result and beside each
-// user message.
+// user message. A note after a Remove reads as a first note: the model never
+// sees the removed note again, nor that the user removed it.
 function originForModel(o: Origin): string {
-  if (o.kind === 'first') return 'First note.'
   if (o.kind === 'changed') return `Changed since v${o.previous.version}: ${describeChanges(o.changes)}.`
-  const r = o.removed
-  return `This note replaces removed v${r.version}. The user removed it; it said: intent «${r.want}», knowledge «${r.inTheirHead}».`
+  return 'First note.'
 }
 
 // What the band's header says about the origin.
@@ -129,7 +128,7 @@ function noteForModel(current: Note, o: Origin): string {
     `Intent: ${current.want}`,
     `Knowledge and gaps: ${current.inTheirHead}`,
   ]
-  if (o.kind !== 'first') lines.push(originForModel(o))
+  if (o.kind === 'changed') lines.push(originForModel(o))
   return lines.join('\n')
 }
 

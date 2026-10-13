@@ -222,10 +222,11 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, the
   await ui.unmount()
 })
 
-// After Remove, the tool result, the band and the model's context tell one
-// story: the new note replaces the one the user removed.
+// After Remove, the band tells the user that the new note replaces the one
+// they removed. The model reads the new note as a first note: it never sees
+// the removed note again, nor that the user removed it.
 
-for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a note after Remove says it replaces the removed one, everywhere`, async ($, on) => {
+for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a note after Remove is a first note to the model, and the band says it replaces the removed one`, async ($, on) => {
   const sent = standIn(on)
   await $.tool.call(NOTE)
   const ui = await $.ui.mount({ plugin: 'mental-model', surface, ...BAND })
@@ -234,12 +235,14 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a n
   await ui.redraw()
   await $.prompt.submit(ask('go on'))
   expect(textOf(written)).toContain('Note v2 written')
-  expect(textOf(written)).toContain('replaces removed v1')
-  expect(textOf(written)).toContain('«send one message»')
-  expect(textOf(written)).not.toContain('First note')
+  expect(textOf(written)).toContain('First note')
+  expect(textOf(written)).not.toContain('send one message')
+  expect(textOf(written)).not.toContain('removed')
   expect(await ui.find({ type: 'Text', text: /replaces removed v1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /changed:/ })).toBe(undefined)
-  expect(joined(sent[0])).toContain('replaces removed v1')
+  expect(joined(sent[0])).toContain('Intent: send two messages')
+  expect(joined(sent[0])).not.toContain('send one message')
+  expect(joined(sent[0])).not.toContain('removed')
   expect(joined(sent[0])).not.toContain('Changed since')
   await ui.press({ key: 'history' })
   await ui.redraw()
@@ -247,6 +250,7 @@ for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a n
   const next = await $.tool.call({ ...NOTE, want: 'send three messages' })
   await ui.redraw()
   expect(textOf(next)).toContain('Changed since v2')
+  expect(textOf(next)).not.toContain('send one message')
   expect(await ui.find({ type: 'Text', text: /changed: intent/ })).toBeDefined()
   await ui.unmount()
 })
@@ -258,7 +262,11 @@ test('a removed note is saved as removed and loads back that way', async ($, on)
   await start($)
   const written = await $.tool.call({ ...NOTE })
   expect(textOf(written)).toContain('Note v4 written')
-  expect(textOf(written)).toContain('replaces removed v3')
+  expect(textOf(written)).toContain('First note')
+  expect(textOf(written)).not.toContain('old want')
+  const ui = await $.ui.mount({ plugin: 'mental-model', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /replaces removed v3/ })).toBeDefined()
+  await ui.unmount()
 })
 
 for (const surface of ['terminal', 'desktop'] as const) test(`on ${surface}, a note after Remove all is a first note`, async ($, on) => {

@@ -18,7 +18,7 @@ Claude rewrites it when its understanding changes, not on every message. The too
 
 The note and its last change also ride beside each of your messages, so Claude reads them where it reads your request. They never go into the system prompt. A system prompt that changes in the middle of a session misses the prompt cache for the whole conversation after it, and the note changes often.
 
-When you press × Remove, the removed note stays in the history, marked as removed. Claude's next note is told that it replaces the removed one, and what the removed one said. The tool result, the band and the line beside your message all say the same thing.
+When you press × Remove, the removed note stays in the history, marked as removed, and the band says which removed version the next note replaces. Claude never sees the removed note again. Claude's next note is a first note to Claude: the tool result and the line beside your message say nothing about the removed one.
 
 The note and its history are saved on disk under the session's id. When you restart Claude Code or resume the session, the note comes back. A new session, or a `/clear`, starts with no note. The mod keeps the 50 most recent sessions.
 
@@ -83,7 +83,7 @@ To run a local checkout instead, start Claude Code with `claude --plugin-dir <fo
 - the nudge: one per turn, only on a write, never after a fresh note
 - the reminder and its `IMPORTANT: ` prefix, and Update on next prompt
 - the note beside each message, and a system prompt that a note never changes
-- the note's origin after a rewrite, a Remove and a Remove all, the same in the tool result, the band and the line beside the message
+- the note's origin after a rewrite, a Remove and a Remove all: after a Remove, the band names the removed version and Claude reads a first note
 - saving and loading per session, removed marks included
 - the band on the terminal and desktop surfaces: each button, the Remove all confirmation, and each way it disarms
 
